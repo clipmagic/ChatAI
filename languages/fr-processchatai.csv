@@ -1,0 +1,5 @@
+en,fr,description,file,hash
+Save,Sauvegarder,,site/modules/ChatAI/ProcessChatAI.module,c9cc8cce247e49bae79f15173ce97354
+Your form has errors. Please fix,Votre formulaire comporte des erreurs. Veuillez les corriger.,,site/modules/ChatAI/ProcessChatAI.module,f70e7d12275a02a84cac1f779fa0bf45
+Failed to save settings.,Échec de l'enregistrement des paramètres.,,site/modules/ChatAI/ProcessChatAI.module,e84e276f8977721922cd012d14210baa
+Please save before proceeding.,Veuillez enregistrer avant de continuer.,,site/modules/ChatAI/ProcessChatAI.module,3f94c0c26e74321fccaaf698a4e58787

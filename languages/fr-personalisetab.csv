@@ -1,0 +1,14 @@
+en,fr,description,file,hash
+Personalise,Personnaliser,,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,b018429b287b629bce5e11a329f111eb
+"Chatbot Persona","Personnalité du chatbot",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,26324849d038fdaff018117bbbd3d5e5
+"Chatbot name","Nom du chatbot",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,8a22e6bbf4546976dc1860dd8ff07875
+Role,Rôle,,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,bbbabdbe1b262f75d99d62880b953be1
+Employer,Employeur,,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,96e430e692feffefb0f0c1ca3e57c1a9
+"Tone of the answers","Ton des réponses",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,777fc4fe8c765aa81eb08311196f4977
+"Welcome message","Message de bienvenue",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,21a0023eec5760e501cb40862fd79ac2
+"User input form","Formulaire de saisie utilisateur",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,e1c77488e118f5ed8f14824fb0d0471c
+"Input field placeholder","Espace réservé au champ de saisie",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,7b4d6aaf98d9bd7f56f5deffdd2fd033
+"Send button text","Envoyer le texte du bouton",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,d0e28ac1f8a206aba07c450b8684756d
+"Warning messages","Messages d'avertissement",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,474e5b1a445af6e10102428735b873bd
+"One more message allowed","Un message supplémentaire autorisé",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,359b1f036d0c4809b5c48073cee4961b
+"No more messages allowed","Plus aucun message autorisé",,site/modules/ChatAI/src/AdminTabs/PersonaliseTab.php,6a86013af267cb3967c9619bcbe56710

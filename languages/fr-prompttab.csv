@@ -1,0 +1,20 @@
+en,fr,description,file,hash
+"Auto-generate Prompt?","Générer automatiquement une invite ?",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,a9ae3ef65034c8b381364f8f2f10ae23
+Yes,Oui,,site/modules/ChatAI/src/AdminTabs/PromptTab.php,93cba07454f06a4a960172bbd6e2a435
+No,Non,,site/modules/ChatAI/src/AdminTabs/PromptTab.php,bafd7322c6e97d25b6299b5d6fe8920b
+Filters,Filtres,,site/modules/ChatAI/src/AdminTabs/PromptTab.php,f3f43e30c8c7d78c6ac0173515e57a00
+"Use blacklist","Utiliser la liste noire",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,b911c2103904116555d3c89153426136
+"Blacklisted terms","Termes sur liste noire",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,4a25f8e70b5016f1276d2272ebdd7ca1
+"Add or remove terms as needed","Ajoutez ou supprimez des termes selon vos besoins",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,0355f9de3d318695aab0c4ff134f0d0f
+"Additional instructions","Instructions supplémentaires",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,b98b6bac76609063be96a34d4903bce2
+"Optional extra information","Informations supplémentaires facultatives",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,a81f692aada54b860c70bc411ef804b4
+"Content guidance","Conseils sur le contenu",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,feca0cf409779113a525b547a699d7ef
+"Search fields","Champs de recherche",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,9538f8bf1bc8895b8114c73afdfd06b8
+"Search templates","Modèles de recherche",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,a902c995a783b45b282abdd123d27d1a
+"Max number of page links","Nombre maximal de liens de page",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,c762b03378eb30ab24799cd3ca21a53e
+"Response approx words","Réponse en mots approximatifs",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,a8ad6edd0646a82deb953ac3776215ec
+"Prompt preview","Aperçu rapide",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,299e8efeb9e15e202b62e2a535a913ec
+"Write your own prompt","Écrivez votre propre invite",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,10fe02dc31fb64ab05b26803d12bf411
+"Overrides all safety rails. Use with care!","Remplace toutes les barrières de sécurité. À utiliser avec précaution !",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,38eb81a11a121c2fd0fd5adc9293e0f7
+"Give your bot guidance on how it should respond.","Donnez à votre robot des indications sur la manière dont il doit réagir.",,site/modules/ChatAI/src/AdminTabs/PromptTab.php,48e1928ec0d57ab1bec91b44cdd5e234
+Prompt,Inciter,,site/modules/ChatAI/src/AdminTabs/PromptTab.php,45d74bdb9de5d4f07a7b7eefac42610a

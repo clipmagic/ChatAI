@@ -1,0 +1,438 @@
+<?php
+/*
+ * Copyright (c) 2025.
+ * Clip Magic - Prue Rowland
+ * Web: www.clipmagic.com.au
+ * Email: admin@clipmagic.com.au
+ *
+ * ProcessWire 3.x
+ * Copyright (C) 2014 by R
+ * Licensed under GNU/GPL
+ *
+ * https://processwire.com
+ */
+
+namespace ProcessWire;
+require_once (__DIR__ . "/src/AdminTabs/DashboardTab.php");
+require_once (__DIR__ . "/src/AdminTabs/PersonaliseTab.php");
+require_once (__DIR__ . "/src/AdminTabs/PromptTab.php");
+
+
+use ChatAI\AdminTabs\DashboardTab;
+//use ChatAI\AdminTabs\PersonaliseTab;
+use ChatAI\AdminTabs\PromptTab;
+use stdClass;
+
+
+class ProcessChatAI extends Process
+{
+    public $tabs = [];
+
+    public $values = [];
+
+    public $formName = 'chat-ai-settings';
+
+    public function init()
+    {
+       $initVals = $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
+    }
+
+    //*** Hooks ***//
+    public function initValues(HookEvent $event)
+    {
+        $form = $event->object;
+        if ($form->getFormName() !== $this->formName) return;
+
+        $return = $event->return;
+
+        if (empty($this['values'])) {
+            $this['values'] = $this->getValues($form);
+        }
+        // OK, we've got the default values sorted. Now for the multi-lang fields
+        $form->populateValues($this['values']);
+
+        $langFields = $form->getByProperty('useLanguages', true, true );
+
+        // Multi-language or not?
+        $languages = $this->wire('languages');
+        if($languages) {
+            $items = $languages->findNonDefault();
+            foreach ($items as $lang) {
+                foreach ($langFields as $field) {
+                    $langValue = $this['values'][$field->name . '__' . $lang->id] ?? '';
+                    $x = $form->getChildByName($field->name);
+                    if (!empty($x)) {
+                        $x->set($field->name . $lang->id, $langValue);
+                        $x->attr($field->name . $lang->id, $langValue);
+                        $x->set('value' . $lang->id, $langValue);
+                    }
+                }
+            }
+        }
+        $promptTab = $form->prompt;
+        $promptText = $this->buildPrompt();
+        $promptTab->getByName('prompt_preview')->attr('value', $promptText);
+
+        // hook only needs to run on initial page load.
+        // after that, the isSubmitted() bit in __execute handles updating the values
+        $this->removeHook($this);
+        $event->return = $return;
+    }
+
+    // Tab builders (lazy-loaded or simple new)
+    protected function tabs(array $tab): array
+    {
+        $user = $this->wire('user');
+        $chatai = $this->wire('modules')->get('ChatAI');
+
+        $output = [];
+        $output['dashboard'] = new \ChatAI\AdminTabs\DashboardTab();
+
+        $craftPrompt = false;
+
+        if(!empty($chatai->prompt_roles)) {
+            foreach ($chatai->prompt_roles as $k) {
+                if($user->hasRole($k)) {
+                    $craftPrompt = true;
+                    break;
+                }
+            }
+        }
+
+        if($user->isSuperuser())
+            $craftPrompt = true;
+
+        if($craftPrompt !== false) {
+            $output['personalise'] = new \ChatAI\AdminTabs\PersonaliseTab();
+            $output['prompt'] = new \ChatAI\AdminTabs\PromptTab();
+        }
+
+        return $output;
+    }
+
+    public function ___execute()
+    {
+        $this->wire('modules')->get('JqueryWireTabs');
+        $tabView = [];
+
+        $this->headline('ChatAI');
+        $modules = $this->wire('modules');
+
+        $this->config->styles->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.css');
+        $this->config->scripts->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.js');
+
+        $this->values = $this->_loadPromptSettings();
+
+        $form = $modules->get('InputfieldForm');
+        $form->attr('name+id', $this->formName);
+
+        // Build each tab fieldset and add to form
+        foreach ($this->tabs($tabView) as $key => $tab) {
+            $out = $tab->build($form, $this->values);   // returns array
+            $key = array_key_first($out);
+            $tabView[$key] = $out[$key];
+            $form = $out['form'];
+        }
+
+
+        // Submit button
+        $submit = $this->modules->get('InputfieldSubmit');
+        $submit->attr('value', 'submit');
+        $submit->attr('value', $this->_('Save'));
+        $submit->header = true;
+        $form->add($submit);
+
+        if($form->isSubmitted()) {
+            $inputPost = $this->wire('input')->post;
+            if ($form->process()) {
+                // form processed successfully without errors.
+                $form->populateValues($inputPost);
+
+                $values = [];
+                foreach ($inputPost as $key => $value) {
+                    if($key === '' || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
+                    $values[$key] = $value;
+                }
+                $this['values'] = $values;
+                $this->savePromptSettingsJson(json_encode($this['values']));
+
+            } else {
+//                $errors = $form->getErrors(); // array of error messages…
+                $inputs = $form->getErrorInputfields(); // …or array of Inputfields with errors
+                $text = "<h3 class='error'>" .$this->_('Your form has errors. Please fix') . "</h3>\n";
+                return $text . $form->render();
+            }
+        }
+        return $form->render();
+    }
+
+    public function addTab($id, $label, $wrapper = null)
+    {
+        $this->tabs[$id] = $label;
+        if($wrapper) $wrapper->addClass('WireTab');
+    }
+
+
+    public function getValues($form) : array
+    {
+        $savedData = $this->_loadPromptSettings();
+        if(!empty($savedData)) return $savedData;
+
+        // OK, nothing in the database.
+        // Populate the values with the defaults
+
+        $user = $this->wire('user');
+        $data = [];
+        $skipTypes = array(
+            'InputfieldMarkup',
+            'InputfieldSubmit',
+        );
+
+        foreach($form->children as $tab) {
+            if($tab->count === 0) continue;
+            if(in_array($tab->className(),$skipTypes)) continue;
+            $inputfieldsArray = $tab->getAll();
+
+            foreach($inputfieldsArray as $tabField) {
+                if($tabField->count === 0 ) continue;
+                $fldName = $tabField->attributes['name'];
+                if($fldName === '' || $fldName === 'submit' || $fldName === '_InputfieldForm' || str_starts_with($fldName, 'TOKEN')) continue;
+                if($user->language->isDefault() || empty($tabField->useLanguages)) {
+                    $data[$fldName] = $form->getValueByName($fldName);
+                } else {
+                    $data[$fldName] = !empty($tabField->getLanguageValue($user->language)) ? $tabField->getLanguageValue($user->language) : $form->getValueByName($fldName);
+                    $data[$fldName] = !empty($tabField->getLanguageValue($user->language)) ? $tabField->getLanguageValue($user->language) : $form->getValueByName($fldName);
+                }
+            }
+        }
+        $this['values'] = $data;
+        return $data;
+    }
+
+    protected function savePromptSettingsJson(string $json): bool {
+        $chatai = $this->modules->get('ChatAI');
+        $db = wire('database'); // WireDatabasePDO (PDO)
+        $table = $chatai::dbTablePrompt;
+
+        // Ensure there's a primary key on id
+        // Upsert at id=1
+        $sql = "INSERT INTO `$table` (id, json) VALUES (1, ?)
+            ON DUPLICATE KEY UPDATE json = VALUES(json), created = CURRENT_TIMESTAMP";
+
+        try {
+            $stmt = $db->prepare($sql);
+            $stmt->bindValue(1, $json, \PDO::PARAM_STR);
+            return $stmt->execute();
+        } catch(\Throwable $e) {
+            wire('log').save('chatai', "savePromptSettingsJson failed: " . $e->getMessage());
+            $this->error($this->_('Failed to save settings.'));
+            return false;
+        }
+    }
+
+    private function _loadPromptSettings(): array {
+        $chatai = $this->modules->get('ChatAI');
+        $db = wire('database');
+        $table = $chatai::dbTablePrompt;
+
+        $stmt = $db->prepare("SELECT json FROM `$table` WHERE id = 1 LIMIT 1");
+        $stmt->execute();
+        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if(!$row || !isset($row['json'])) return [];
+
+        $data = json_decode($row['json'], true);
+        return is_array($data) ? $data : [];
+    }
+
+    protected function buildPrompt(): string {
+        $session = $this->wire('session');
+        if(empty($this['values'])) {
+            $session->warning($this->_('Please save before proceeding.'));
+           return '';
+        }
+        $modules = wire('modules');
+        $user = wire('user');
+
+        // Custom prompt
+        if ($this['values']['autogen'] === 0) {
+            // Server-side enforcement: only use the custom text
+            $txt = trim((string) $this['values']['custom_prompt']);
+            if ($txt !== '') return $txt;
+        }
+
+        // Autogenerated prompt
+        foreach ($this['values'] as $key => $value) {
+            $$key = $value;
+        }
+
+        $botname = $this->getLanguageVal('botname');
+
+        // Auto-generated prompt
+        $langCode = $user->language ? $user->language->name : 'en';
+        $langs = [
+            'en' => 'English',
+            'en-au' => 'Australian English',
+            'es' => 'Spanish',
+            'fr' => 'French',
+            'de' => 'German'
+        ];
+
+        if ($modules->isInstalled('Languages')) {
+            foreach ($modules->get('Languages')->languages as $language) {
+                $langs[$language->name] = $language->title;
+            }
+        }
+
+        $langName = isset($langs[$langCode]) ? $langs[$langCode] : 'English';
+
+        $counter = 1;
+        $prompt = '';
+        // Assemble your safe default system prompt
+        if(!empty($botname)) {
+            $prompt .= "You  are {$botname}";
+                if (!empty($botrole)) {
+                    $prompt .= ", a {$botrole}";
+                    if (!empty($bizname))
+                        $prompt .= " for {$bizname}";
+                }
+            $prompt .= ".\n";
+        }
+
+        // 1. Language detections
+        $prompt .= "\n{$counter}. **Language Detection**";
+        $prompt .= "\n- Automatically detect and respond in the user's language. If the language is unclear, default to {$langName}\n";
+
+        // 2. Tone and style
+        if(!empty($tone)) {
+            $counter++;
+            $prompt .= "\n{$counter}. **Tone & Style**\n";
+            $prompt .= "- Maintain a {$tone} tone.\n";
+            $prompt .= "- Encourage users without excessive optimism.\n";
+            $prompt .= "- Do not use emojis or em dashes.\n";
+            $prompt .= "- Keep sentences clear, concise, and straightforward.\n";
+            $prompt .= "- Do not identify yourself as {$botname} unless specifically asked.\n";
+        }
+
+        // 3. Output formatting
+        $counter++;
+        $prompt .= "\n{$counter}. **Output Formatting (HTML only)**";
+        $prompt .= "\n- Use only these tags: `<p>`, `<ul>`, `<li>`, `<ol>`, `<strong>`, `<em>`, `<code>`, `<br>`, `<a>`.";
+        $prompt .= "\n- Output HTML fragments only. Do not include `<html>`, `<head>`, or `<body>`.";
+        $prompt .= "\n- Do not include inline CSS, scripts, images, or tables.";
+        $prompt .= "\n- Use `<p>` for paragraphs, `<ul>` or `<ol>` for lists, and `<br>` for simple line breaks.";
+        $prompt .= "\n- Escape any user-supplied HTML unless specific formatting is requested. Treat input as plain text by default.";
+        $prompt .= "\n- Create links with `<a href='...'>` using only absolute URLs and no other attributes.\n";
+
+        // Safety & Civility
+        $counter++;
+        $prompt .= "\n{$counter}. **Safety & Civility**";
+        $prompt .= "\n- Do not echo rude or obscene language. Respond politely and guide the conversation toward respect.";
+        $prompt .= "\n- Decline any harmful or illegal requests succinctly and suggest safer alternatives.\n";
+        $prompt .= "\n- Always acknowledge greetings and ask for what the user would like to know.\n";
+
+        // Brevity
+        $counter++;
+        $prompt .= "\n{$counter}. **Brevity**";
+        $words = !empty($botwords) ? $botwords : 400;
+        $prompt .= "\n- Limit responses to approximately {$words} words.";
+        $prompt .= "\n- When addressing broad topics, present essential information in short lists.";
+        $prompt .= "\n- For greetings or casual conversation, respond naturally and conversationally without meta-commentary.\n";
+
+        // Clarification & Uncertainty
+        $counter++;
+        $prompt .= "\n{$counter}. **Clarification & Uncertainty**";
+        $prompt .= "\n- If critical details are missing, ask up to two brief clarifying questions.";
+        $prompt .= "\n- If the user prefers no questions, act on reasonable assumptions and clearly state them.";
+        $prompt .= "\n- If information is unavailable, acknowledge this briefly and suggest next steps or what details are needed.\n";
+
+        // Additional Guidance
+        $prompt .= "\n**Additional Guidance**";
+        $prompt .= "\n- Only validate coverage when the user’s request is complex or multi-part.";
+        $prompt .= "\n- Do not state “this covers your greeting” or similar for simple greetings or small talk.";
+        $prompt .= "\n- Except when it is a greeting or small talk, if no site context is provided for the current question, reply briefly that no relevant on‑site pages were found, then ask one specific clarifying question. Offer exactly one self‑check tip. Do not mention browsing or technical limitations.";
+
+        if(!empty($autohint)) {
+            $prompt .= "\n{$autohint}";
+        }
+        $prompt .= "\n";
+        return $prompt;
+    }
+
+    public function getPrompt(): string {
+        return $this->buildPrompt();
+    }
+
+    public function getIntro(): string {
+        $botname = $this->getLanguageVal('botname');
+        bd($botname);
+        $botintro = $this->getLanguageVal('botintro');
+        $intro = str_ireplace('{botname}', $botname, $botintro);
+        return $intro;
+    }
+
+    public function getLanguageVal(string $name): string
+    {
+        if(empty($this['values']))
+            $this['values'] = $this->_loadPromptSettings();
+
+        $languages = $this->wire('languages');
+        $user = $this->wire('user');
+
+        if(!$languages || $user->language->isDefault()) {
+            return $this['values'][$name];
+        } else {
+            $userLangId = $user->language->id;
+            $langVal = !empty($this['values'][$name . '__' . $userLangId]) ? $this['values'][$name . '__' . $userLangId] : $this['values'][$name];
+            return $langVal;
+        }
+    }
+
+    public function getPlaceholder (): string
+    {
+        return $this->getLanguageVal('input_placeholder');
+    }
+
+    public function getButtonText (): string
+    {
+        return $this->getLanguageVal('submit_text');
+    }
+
+    public function getBotName (): string
+    {
+        return $this->getLanguageVal('botname');
+    }
+
+    public function getWidget(string $path): string {
+        if(empty($this['values']))
+            $this['values'] = $this->_loadPromptSettings();
+        $files = wire('files');
+        $intro = $this->getIntro();
+        $placeholder = $this->getPlaceholder();
+        $submitText = $this->getButtonText();
+        $widgetFile =  $files->render($path, ['intro' => $intro, 'placeholder'=>$placeholder, 'button_text'=>$submitText]);
+        return $widgetFile;
+    }
+
+    public function isBlacklisted($message) : bool
+    {
+        $sanitizer = $this->wire('sanitizer');
+        $message = $sanitizer->text($message);
+        if(empty($this['values']))
+            $this['values'] = $this->_loadPromptSettings();
+        $blacklisted = false;
+        if($this['values']['use_blacklist'] !== 1) return $blacklisted;
+
+        if (!empty($this['values']['blacklist'])) {
+            $blacklist = explode(',', $this['values']['blacklist']);
+            foreach ($blacklist as $term) {
+                $term = $sanitizer->text($term);
+                if ($term && stripos($message, $term) !== false) {
+                    $blacklisted = true;
+                    break;
+                }
+            }
+        }
+        return $blacklisted;
+    }
+
+}

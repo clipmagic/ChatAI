@@ -1,0 +1,36 @@
+en,fr,description,file,hash
+"OpenAI Settings","Paramètres OpenAI",,site/modules/ChatAI/ChatAI.module,742a84e3756a13f064f5a2f13ce23d32
+"OpenAI API Key","Clé API OpenAI",,site/modules/ChatAI/ChatAI.module,fbd635ef0b00544e12444ef000005693
+"OpenAI Model","Modèle OpenAI",,site/modules/ChatAI/ChatAI.module,8987ea2462c17012f55aee7418cb6b3a
+Verbosity,Verbosité,,site/modules/ChatAI/ChatAI.module,6b1ea9662267f5399305f6b7dc5c059e
+"Reasoning Effort","Effort de raisonnement",,site/modules/ChatAI/ChatAI.module,78f684cda080c52c567133e91718fc0a
+"Temperature (0–1)","Température (0–1)",,site/modules/ChatAI/ChatAI.module,309524a923c73659dadb7adb5a1747f9
+"Lower is more factual, higher is more creative","Le plus bas est plus factuel, le plus haut est plus créatif",,site/modules/ChatAI/ChatAI.module,02ee9189d3639bd442c3be35c2a34864
+"Max tokens","Nombre maximum de jetons",,site/modules/ChatAI/ChatAI.module,ebd6c027329f58c7a56ddb68035e623a
+"Max tokens per message","Nombre maximal de jetons par message",,site/modules/ChatAI/ChatAI.module,70a9b921ae37c3366e312875dde632fa
+"Maximum questions","Nombre maximum de questions",,site/modules/ChatAI/ChatAI.module,99b4287ec3d4039dd3cb71bb699094d3
+"Max questions per conversation","Nombre maximum de questions par conversation",,site/modules/ChatAI/ChatAI.module,ca6f94b966f6879f39af93a948663f29
+"Maximum blacklist","Liste noire maximale",,site/modules/ChatAI/ChatAI.module,668af43433cbb9424c401ae29eb7199b
+"Number of blacklist strikes before being blocked","Nombre de mises sur liste noire avant d'être bloqué",,site/modules/ChatAI/ChatAI.module,208169a7e758ec244928232a59312f26
+"Roles allowed to craft prompt","Rôles autorisés à créer une invite",,site/modules/ChatAI/ChatAI.module,8621b791133206603f2b39b8714d210f
+"Superuser enabled by default.\r
+You may optionally add a ChatAI specific role with page-edit permission.","Superutilisateur activé par défaut.\r
+Vous pouvez éventuellement ajouter un rôle spécifique à ChatAI avec autorisation de modification de page.",,site/modules/ChatAI/ChatAI.module,75d2188bf2e63d5cbe401ca333d1bf56
+Files,Fichiers,,site/modules/ChatAI/ChatAI.module,91f3a2c0e4424c87689525da44c4db11
+"Path to widget file","Chemin d'accès au fichier du widget",,site/modules/ChatAI/ChatAI.module,d4a0816ae56bcc3e6940ed4cfa42665b
+"Path to CSS file","Chemin d'accès au fichier CSS",,site/modules/ChatAI/ChatAI.module,87bc4252c9a79a04ba5251bb1006710d
+"Path to JS file","Chemin d'accès au fichier JS",,site/modules/ChatAI/ChatAI.module,4651933de2f310e471aac7c7f7926ad4
+"Path to snippets directory","Chemin d'accès au répertoire des extraits",,site/modules/ChatAI/ChatAI.module,50bf03779c6cf36958c6b8b5d59f60a0
+"You have been blocked. Goodbye.","Vous avez été bloqué. Au revoir.",,site/modules/ChatAI/ChatAI.module,94c0e0b786a391eab55a4eb48ce8f47b
+"No message submitted.","Aucun message soumis.",,site/modules/ChatAI/ChatAI.module,91dca94f669595372a3686328de15554
+"Too many questions. Goodbye.","Trop de questions. Au revoir.",,site/modules/ChatAI/ChatAI.module,66c7418a6f4ed70ba92be1fcb2d14f96
+"Insufficient OpenAI tokens","Jetons OpenAI insuffisants",,site/modules/ChatAI/ChatAI.module,0cf68e5b63147209eb48e062feecebfa
+"Ooops! Something went wrong. Please try again later.","Oups ! Un problème est survenu. Veuillez réessayer plus tard.",,site/modules/ChatAI/ChatAI.module,4f5bbec980c6428507866119572778ef
+"Please rephrase your question","Veuillez reformuler votre question",,site/modules/ChatAI/ChatAI.module,2f70ca04286772765695ddc8c5a05472
+"Not blacklisted but off topic","Pas sur liste noire mais hors sujet",,site/modules/ChatAI/ChatAI.module,e2790883a2af01d994403f1e057b8993
+"You have one question left before I have to go. Make it a good one!","Il te reste une question avant que je parte. Pose-la bien !",,site/modules/ChatAI/ChatAI.module,fbe3277d5122c75a6a1764593ed37582
+"No response","Aucune réponse",,site/modules/ChatAI/ChatAI.module,13c7bfc6e9bb8dcf7be23a4c941a032a
+"Unexpected API response structure.","Structure de réponse API inattendue.",,site/modules/ChatAI/ChatAI.module,540279bb2453717f03d8a0d7faa42dfa
+"You have been locked out due to repeated inappropriate messages.","Vous avez été bloqué en raison de messages inappropriés répétés.",,site/modules/ChatAI/ChatAI.module,1a7696cec85dd27fa532de6a3664c833
+"Please rephrase your question (Warning: %d/%d)","Veuillez reformuler votre question (Attention : %d/%d)",,site/modules/ChatAI/ChatAI.module,d971111b2d92ad46ff8d96ad59803778
+"Please rephrase your question.","Veuillez reformuler votre question.",,site/modules/ChatAI/ChatAI.module,f7595f91a1f2a1c56dddc48f488cd9bd
