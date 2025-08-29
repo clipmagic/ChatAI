@@ -186,7 +186,7 @@ class RAG extends Wire
     }
 
     /** 5) Should we index this page? */
-    protected function shouldIndexPage(Page $page, array $cfg): bool {
+    public function shouldIndexPage(Page $page, array $cfg): bool {
         $tpls = $this->getConfiguredContextTemplates($cfg);
         if (!$tpls) return false;
         return in_array($page->template->name, $tpls, true);
