@@ -68,7 +68,7 @@ class RAG extends Wire
         return $items;
     }
 
-    protected function collectPageText(Page $page, array $cfg): void {
+    public function collectPageText(Page $page, array $cfg): void {
         $tpl = $page->template;
         $vectorTpls = $this->getConfiguredContextTemplates($cfg);
         if(!in_array($tpl->name, $vectorTpls)) return;
