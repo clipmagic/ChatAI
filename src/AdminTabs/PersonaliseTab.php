@@ -24,12 +24,8 @@ class PersonaliseTab
     {
 
         $m = \ProcessWire\Wire('modules');
-//        $m = $m->get('ProcessChatAI');
-//        $m = \ProcessWire\Wire('languages');
         $user = \ProcessWire\wire('user');
         $userLang = $user->language;
-
-
 
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
@@ -65,7 +61,6 @@ class PersonaliseTab
         $f->stripTags = true;
         $fieldset->add($f);
         $inputfields->add($fieldset);
-
 
         $fieldset = $m->get('InputfieldFieldset');
         $fieldset->label($m->_('Background'));
@@ -132,32 +127,38 @@ class PersonaliseTab
 
         $inputfields->add($fieldset);
 
-        // Warning messages
-//        $fieldset = $m->get('InputfieldFieldset');
-//        $fieldset->attr('name+id', 'warnings');
-//        $fieldset->label($m->_('Warning messages'));
-//
-//        $f = $m->get('InputfieldTextarea');
-//        $f->attr('name+id', 'oneleft');
-//        $f->label($m->_('One more message allowed'));
-//        $f->useLanguages = true;
-//        $value = $data['oneleft'] ?? "One more message allowed";
-//        $f->attr('value', $value);
-//        $f->columnWidth(50);
-//        $f->stripTags = true;
-//        $fieldset->add($f);
-//
-//        $f = $m->get('InputfieldTextarea');
-//        $f->attr('name+id', 'goodbye');
-//        $f->label($m->_('No more messages allowed'));
-//        $f->useLanguages = true;
-//        $value = $data['goodbye'] ?? "Well, that was fun!\n I have to go now. Bye.";
-//        $f->attr('value', $value);
-//        $f->columnWidth(50);
-//        $f->stripTags = true;
-//        $fieldset->add($f);
-//
-//        $inputfields->add($fieldset);
+        // Quick replies
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->label($m->_('Quick answers'));
+        $fieldset->attr('name+id', 'quick_answers');
+
+        // Small-talk reply
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name', 'smalltalk_reply');
+        $f->label($m->_('Small-talk reply'));
+        $f->useLanguages = true;
+//        $f = $this->formRenderHelper($f, 'Hello. How can I help?', $languages, $this['values']);
+        $f->attr('value', 'Hello. How can I help?');
+        $fieldset->add($f);
+
+        // No-context reply
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name', 'no_context_reply');
+        $f->label($m->_('No-context reply'));
+        $f->useLanguages = true;
+        $f->attr('value', 'I can help with pages and information on this site. Tell me what you are looking for and I will point you to the right page.');
+//        $f = $this->formRenderHelper($f, 'I can help with pages and information on this site. Tell me what you are looking for and I will point you to the right page.', $languages, $this['values']);
+        $fieldset->add($f);
+
+        // Small-talk triggers (one per line)
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name', 'smalltalk_triggers');
+        $f->label($m->_('Small-talk triggers (one per line)'));
+        $f->useLanguages = true;
+//        $f = $this->formRenderHelper($f, "hi\nhello\nhey\nok\nthanks\nbonjour\nsalut", $languages, $this['values']);
+        $f->attr('value', "hi\nhello\nhey\nok\nthanks\nbonjour\nsalut");
+        $fieldset->add($f);
+        $inputfields->add($fieldset);
 
         $form->add($inputfields);
 

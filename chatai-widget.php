@@ -44,7 +44,7 @@
     <div id="chatbot-messages" class="chatbot-messages"></div>
 
     <form id="chatbot-form" class="chatbot-form">
-        <input type="text" id="chatbot-input" class="chatbot-input" placeholder="<?=$placeholder?>" required>
+        <input type="text" id="chatbot-input" data-ln="<?=$user->language->id?>" class="chatbot-input" placeholder="<?=$placeholder?>" required>
         <button type="submit" class="chatbot-submit"><?=$button_text?></button>
     </form>
 </dialog>

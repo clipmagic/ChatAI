@@ -85,7 +85,8 @@ let chatai = {
 
                 let url = '/chatai-api/'
                 let data = {
-                    msg: message
+                    msg: message,
+                    ln: input.dataset.ln
                 }
                 const res = await chatai.connectPost(data, url)
                 // console.log('message before post: ', message)

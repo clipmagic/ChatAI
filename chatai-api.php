@@ -28,7 +28,6 @@ $result->count = $count;
 if($count > $chatai->max_messages) {
     $result->stop = true;
     $result->error = $chatai->getErrorMessage(4);
-    $result->html = $files->render($config->paths->root . $chatai->snippets . "/last-message.php");
     return json_encode($result);
 }
 
@@ -43,38 +42,13 @@ if (!empty($post) && empty($result->error)) {
         $result->error = $chatai->getErrorMessage(2);
     }
 
-    // One more message allowed
-    if($count === $chatai->max_messages - 1) {
-        $result->html = $files->render($config->paths->root . $chatai->snippets . "/one-message-left.php");
-    }
-
-    // Last message submitted, so stop the chatbot
-    if($count === $chatai->max_messages) {
-        $result->html = $files->render($config->paths->root . $chatai->snippets . "/last-message.php");
-        $result->stop = true;
-    }
-
-    // Send the message to OpenAI (if not blacklisted)
-    $result = $chatai->sendMessage($userMessage);
+    $result = $chatai->sendMessage($userMessage, $data->ln);
 
     if(empty($result->blacklisted) && !empty($result->reply) ) {
         $botanswer = $sanitizer->unentities($result->reply);
         $answer = !empty($result->html) ? $sanitizer->text($result->html) . $botanswer : $botanswer;
         $result->reply = new stdClass;
         $result->reply->msg = $answer;
-    }
-
-
-    // Add one to the session message counter
-    $count = $session->getFor('chatai', 'count') + 1;
-    $session->setFor('chatai', 'count', $count);
-
-    // Save the messages to the session
-    $chatai->saveToTranscript('user', $userMessage);
-    if(!empty($answer)) {
-        $chatai->saveToTranscript('assistant', $answer);
-    } elseif(!empty($result->html) && empty($answer)) {
-        $chatai->saveToTranscript('assistant', $result->html);
     }
 
     return json_encode($result);

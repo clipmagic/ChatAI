@@ -30,54 +30,97 @@ class ProcessChatAI extends Process
 
     public $values = [];
 
+    public $changes = [];
+
     public $formName = 'chat-ai-settings';
+
+    public function __construct()
+    {
+        parent::__construct();
+        require_once (dirname(__FILE__) . "/src/RAG.php-old");
+    }
 
     public function init()
     {
-       $initVals = $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
+        $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
+
+        $this->addHookBefore('Pages::saveReady', function (HookEvent $event) {
+            $page = $event->arguments(0);
+            if($page->isChanged()) {
+                // There are changes to this page
+                $this['changes'] = $page->getChanges();
+            }
+        });
+
+
+        $this->addHookAfter('Pages::saved, Pages::deleted', function($event) {
+            $page = $event->arguments(0);
+            $cfg = $this->_loadPromptSettings();
+
+            $rag = new RAG();
+            $hasTpl = $rag->shouldIndexPage($page, $cfg);
+
+            // page doesn't match the spec for rag indexing
+            // delete from rag db if it was there previously
+            if(!$hasTpl) {
+                bd($page->template->name);
+                bd($rag->hasVectorsForPage($page->id));
+
+                if($rag->hasVectorsForPage($page->id)) {
+                    $rag->deletePageVectors($page);
+                }
+                return;
+            }
+
+            // do not record pages that cannot be viewed by a guest, eg trashed, unpublished, etc
+            // TODO differentiate between Public and logged-in frontend user
+            if(!$page->isPublic()) {
+                $rag->deletePageVectors($page);
+             } elseif(empty($this['changes'])) {
+                    // don't re-index if already in the vector db
+                    if($rag->hasVectorsForPage($page->id)) return;
+            } else {
+                // page meets all the requirements so add it to vector db
+                try { $rag->collectPageText($page, $cfg); }
+                catch (WireException $e) { $this->wire('log')->save('chatai', 'Index error: '.$e->getMessage()); }
+            }
+        });
     }
 
+
+
     //*** Hooks ***//
+
     public function initValues(HookEvent $event)
     {
         $form = $event->object;
         if ($form->getFormName() !== $this->formName) return;
+        if ($this->wire('input')->requestMethod('POST')) return;
 
-        $return = $event->return;
-
-        if (empty($this['values'])) {
-            $this['values'] = $this->getValues($form);
-        }
-        // OK, we've got the default values sorted. Now for the multi-lang fields
+        // Load once and populate defaults
+        if (empty($this['values'])) $this['values'] = $this->getValues($form);
         $form->populateValues($this['values']);
 
-        $langFields = $form->getByProperty('useLanguages', true, true );
-
-        // Multi-language or not?
+        // Multi-language fill for non-default tabs
         $languages = $this->wire('languages');
-        if($languages) {
-            $items = $languages->findNonDefault();
-            foreach ($items as $lang) {
-                foreach ($langFields as $field) {
-                    $langValue = $this['values'][$field->name . '__' . $lang->id] ?? '';
-                    $x = $form->getChildByName($field->name);
-                    if (!empty($x)) {
-                        $x->set($field->name . $lang->id, $langValue);
-                        $x->attr($field->name . $lang->id, $langValue);
+        if ($languages) {
+            foreach ($languages->findNonDefault() as $lang) {
+                foreach ($form->getByProperty('useLanguages', true, true) as $field) {
+                    if ($x = $form->getChildByName($field->name)) {
+                        $langValue = $this['values'][$field->name . '__' . $lang->id] ?? '';
                         $x->set('value' . $lang->id, $langValue);
                     }
                 }
             }
         }
-        $promptTab = $form->prompt;
-        $promptText = $this->buildPrompt();
-        $promptTab->getByName('prompt_preview')->attr('value', $promptText);
 
-        // hook only needs to run on initial page load.
-        // after that, the isSubmitted() bit in __execute handles updating the values
-        $this->removeHook($this);
-        $event->return = $return;
+        // preview
+        $form->prompt->prompt_preview->attr('value', $this->buildPrompt());
+
+        // one-shot
+        $event->removeHook($this);
     }
+
 
     // Tab builders (lazy-loaded or simple new)
     protected function tabs(array $tab): array
@@ -364,7 +407,6 @@ class ProcessChatAI extends Process
 
     public function getIntro(): string {
         $botname = $this->getLanguageVal('botname');
-        bd($botname);
         $botintro = $this->getLanguageVal('botintro');
         $intro = str_ireplace('{botname}', $botname, $botintro);
         return $intro;
@@ -434,5 +476,6 @@ class ProcessChatAI extends Process
         }
         return $blacklisted;
     }
+
 
 }

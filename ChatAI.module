@@ -280,9 +280,15 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $p;
     }
 
-    public function sendMessage($data) : mixed
+    public function sendMessage($data, $lang = null) : mixed
     {
+
+        bd($data);
+        bd($lang);
+
+
         $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+        $sanitizer = $this->wire('sanitizer');
 
         // 0) Hard block (blacklist etc.)
         $allowed = $this->isMessageAllowed($data);
@@ -313,12 +319,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // 3) Build dynamic context from PW pages for THIS question
         //    (do NOT store in transcript)
         //    You already have: findRelevantPages(), pageExcerpt(), buildTextContextFromPages()
-        $settings        = $this->_getSettings(); // or where you store admin config
+ //       $settings        = $this->_getSettings(); // or where you store admin config
 
-        $contentFields   = $settings->context_fields      ?: 'summary|body';
-        $templatesCsv    = $settings->context_templates   ?: 'home|basic-page';
-        $limit           = (int)($settings->context_limit ?: 12);
-        $maxExcerptChars = (int)($settings->context_snippet_len ?: 200);
+        $contentFields   = $this->context_fields      ?: 'summary|body';
+        $templatesCsv    = $this->context_templates   ?: 'home|basic-page';
+        $limit           = (int)($this->context_limit ?: 12);
+        $maxExcerptChars = (int)($this->context_snippet_len ?: 200);
 
         $foundPages = $this->findRelevantPages($userMsg, $contentFields, $templatesCsv, $limit);
 
@@ -357,7 +363,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Add current user turn (note: we also append it to transcript right away)
         $messagesForApi[] = ['role' => 'user', 'content' => $userMsg];
         $this->saveToTranscript('user', $userMsg);
-bd(wire('session')->get('chatai'));
 
         // 5) Prepare API request (you’re already using chat/completions)
         $url = 'https://api.openai.com/v1/chat/completions';
@@ -373,6 +378,8 @@ bd(wire('session')->get('chatai'));
         $response     = $http->send($url, json_encode($postData), 'POST');
         $responseData = json_decode($response, true);
 
+
+
         $output = new \stdClass();
 
         if (!empty($responseData)) {
@@ -386,8 +393,35 @@ bd(wire('session')->get('chatai'));
                 // Persist the assistant reply in transcript
                 $this->saveToTranscript('assistant', $answer);
 
-                // Add bot name if you like
+                // Add the bot name
+                $languages = $this->wire('languages');
+                if ($languages && $lang !== null && $lang !== '') {
+                    $langID   = (int) $this->wire('sanitizer')->int($lang);
+                    $userLang = $languages->get($langID); // id or name both work
+
+//                    if ($userLang instanceof \ProcessWire\Language) {
+//                        // request-scope switch
+//                        $this->wire('user')->setLanguage($userLang);
+//                        // or: $languages->setLanguage($userLang);
+//                    } else {
+//                        $def = $languages->getDefault();
+//                        $this->wire('user')->setLanguage($def);
+//                        $this->wire('log')->save('chatai', "Invalid user language submitted: $langID");
+//                    }
+//
+                    try {
+                        $languages->setLanguage($lang); // id or name
+                    } catch (WireException $e) {
+                        $languages->setLanguage($languages->getDefault());
+                        wire('log')->save('chatai', "setLanguage() failed for '$lang': " . $e->getMessage());
+                    }
+                }
+
+// now this resolves in the correct language
                 $output->name = $chatProcess->getBotName();
+
+                $output->name = $chatProcess->getBotName();
+                bd($output);
 
             } elseif (isset($responseData['error']['code'])) {
 
@@ -917,12 +951,31 @@ SQL;
           KEY ix_user (user_id),
           KEY ix_created (created_at)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
+        
+        -- Vectors
+        DROP TABLE IF EXISTS chatai_vec_chunks;
+        CREATE TABLE chatai_vec_chunks (
+          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          `page_id` INT UNSIGNED NOT NULL,
+          `lang_id` VARCHAR(16) NOT NULL DEFAULT '0',
+          `chunk_index` INT UNSIGNED NOT NULL,
+          `source_url` TEXT NULL,
+          `title` VARCHAR(255) NULL,
+          `text` MEDIUMTEXT NOT NULL,
+          `embedding_csv` LONGTEXT NOT NULL,
+          `created_at` DATETIME NOT NULL,
+          `updated_at` DATETIME NOT NULL,
+          PRIMARY KEY (`id`),
+          KEY `ix_page_lang` (`page_id`, `lang_id`),
+          FULLTEXT KEY `ft_text` (`text`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 SQL;
 
         try {
             $db->query($sql);
         } catch(\WireException $e) {
-            wire('log')->save('errors', 'Failed to create ChatAI message tables. ' . $e->getMessage());
+            wire('log')->save('errors', 'Failed to create ChatAI tables. ' . $e->getMessage());
         }
 
 
@@ -1047,22 +1100,14 @@ SQL;
         DROP TABLE IF EXISTS chatai_conversations;
         DROP TABLE IF EXISTS chatai;
         DROP TABLE IF EXISTS chatai_prompt;
+        DROP TABLE IF EXISTS chatai_vec_chunks;
 SQL;
 
         try {
             $database->query($sql);
-       //     $database->query("DROP TABLE IF EXISTS " . self::dbTableName);
         } catch (WireException $e) {
             wire('log')->save('error', "Failed to delete ChatAI db tables. " . $e->getMessage());
         }
-
-//        try {
-//            $database->query("DROP TABLE IF EXISTS " . self::dbTablePrompt);
-//        } catch (WireException $e) {
-//            wire('log')->save('error', "Failed to delete ChatAI db prompt settings table. " . $e->getMessage());
-//        }
-//
-
 
         $apiPage = $pages->get("name=chatai-api");
         if(!$apiPage instanceof NullPage)
