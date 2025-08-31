@@ -51,7 +51,7 @@ class RAG extends Wire {
      *   - [["title","headline"],["summary"],["body"]]
      * Output: [["title","headline"],["summary"],["body"]]
      */
-    protected function getConfiguredContextFields(array $cfg): array {
+/*    protected function getConfiguredContextFields(array $cfg): array {
         $raw = $cfg['context_fields'] ?? [];
 
         // Normalize into array of strings OR array of arrays
@@ -83,8 +83,21 @@ class RAG extends Wire {
         if (!$hasTitleish) array_unshift($slots, ['title','headline']);
 
         return $slots;
-    }
+    }*/
+    public function getConfiguredContextFields(array $cfg): array
+    {
+        $sanitizer = $this->wire('sanitizer');
+        $raw = $cfg['context_fields'] ?? [];
+        $items = explode('|', $raw);
+        array_unshift($items, 'title','headline');
+bd($items);
 
+        $slots  = [];
+        foreach($items as $item) {
+            $slots[] = $sanitizer->text($item);
+        }
+        return $slots;
+    }
     /** Page eligibility: template match AND at least one configured field present */
     public function shouldIndexPage(Page $page, array $cfg): bool {
         $tpls = $this->getConfiguredContextTemplates($cfg);
@@ -93,10 +106,8 @@ class RAG extends Wire {
             if (!in_array($tplName, $tpls, true)) return false;
         }
         $slots = $this->getConfiguredContextFields($cfg);
-        foreach ($slots as $alts) {
-            foreach ($alts as $f) {
+        foreach ($slots as $f) {
                 if ($page->template->hasField($f)) return true;
-            }
         }
         return false;
     }
@@ -214,9 +225,9 @@ class RAG extends Wire {
 
     /** get clean text */
     protected function toPlainText($value): string {
-        if ($value instanceof \ProcessWire\WireArray) return '';        // repeaters/PageArrays: TODO
-        if (is_object($value) && method_exists($value, '__toString')) $value = (string)$value;
-        if (!is_string($value)) return '';
+//        if ($value instanceof \ProcessWire\WireArray) return '';        // repeaters/PageArrays: TODO
+//        if (is_object($value) && method_exists($value, '__toString')) $value = (string)$value;
+//        if (!is_string($value)) return '';
 
         $wireTextTools = new WireTextTools();
         return trim($wireTextTools->markupToText($value, [
@@ -250,12 +261,54 @@ class RAG extends Wire {
 ", $buf);
     }
 
+    protected function renderFld(Page $page, array $fnames): string
+    {
+        $buf = [];
+        foreach ($fnames as $fname) {
+            if (!$page->hasField($fname)) {
+                continue;
+            }
+            $pageFld = $page->get($fname);
+            $fields = $this->wire('fields');
+
+            $fieldType = $fields->get($fname)->getFieldType();
+
+            switch ($fieldType) {
+                case 'FieldtypeRepeater':
+                    foreach ($pageFld as $child) {
+                        foreach ($child->fields as $field) {
+                            $txt = $this->toPlainText($child->$field);
+                            if ($txt !== '') {
+                                $buf[] = $txt;
+                            }
+                        }
+                    }
+                    break;
+
+                default:
+                    // it's a single field type
+                    $txt = $this->toPlainText($page->render($fname));
+                    if ($txt !== '') {
+                        $buf[] = $txt;
+                    break;
+
+            }
+        }
+    }
+        return implode("", $buf);
+    }
+
+
+
+
 /** assemble page text across configured slots */
 protected function assembleText(Page $page, array $cfg): string {
     $slots = $this->getConfiguredContextFields($cfg);
+
     $parts = [];
-    foreach ($slots as $alts) {
-        $v = $this->resolveSlotValue($page, $alts);
+    foreach ($slots as $v) {
+   //     $v = $this->resolveSlotValue($page, $alts);
+        $v = $this->renderFld($page, $slots);
         if ($v !== '') $parts[] = $v;
     }
     return implode("\n\n", $parts);
