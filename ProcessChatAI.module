@@ -30,31 +30,21 @@ class ProcessChatAI extends Process
 
     public $values = [];
 
-    public $changes = [];
-
     public $formName = 'chat-ai-settings';
 
     public function __construct()
     {
         parent::__construct();
-        require_once (dirname(__FILE__) . "/src/RAG.php-old");
+        require_once (dirname(__FILE__) . "/src/RAG.php");
     }
 
     public function init()
     {
         $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
 
-        $this->addHookBefore('Pages::saveReady', function (HookEvent $event) {
-            $page = $event->arguments(0);
-            if($page->isChanged()) {
-                // There are changes to this page
-                $this['changes'] = $page->getChanges();
-            }
-        });
-
-
         $this->addHookAfter('Pages::saved, Pages::deleted', function($event) {
             $page = $event->arguments(0);
+            $changes = $event->arguments(1);
             $cfg = $this->_loadPromptSettings();
 
             $rag = new RAG();
@@ -62,13 +52,8 @@ class ProcessChatAI extends Process
 
             // page doesn't match the spec for rag indexing
             // delete from rag db if it was there previously
-            if(!$hasTpl) {
-                bd($page->template->name);
-                bd($rag->hasVectorsForPage($page->id));
-
-                if($rag->hasVectorsForPage($page->id)) {
-                    $rag->deletePageVectors($page);
-                }
+            if(!$hasTpl && $rag->hasVectorsForPage($page->id)) {
+                $rag->deletePageVectors($page);
                 return;
             }
 
@@ -76,14 +61,18 @@ class ProcessChatAI extends Process
             // TODO differentiate between Public and logged-in frontend user
             if(!$page->isPublic()) {
                 $rag->deletePageVectors($page);
-             } elseif(empty($this['changes'])) {
-                    // don't re-index if already in the vector db
-                    if($rag->hasVectorsForPage($page->id)) return;
-            } else {
-                // page meets all the requirements so add it to vector db
-                try { $rag->collectPageText($page, $cfg); }
-                catch (WireException $e) { $this->wire('log')->save('chatai', 'Index error: '.$e->getMessage()); }
+                return;
+             }
+
+            if(empty($changes && $rag->hasVectorsForPage($page->id))) {
+                // don't re-index if already in the vector db
+                return;
             }
+
+            // page meets all the requirements so add it to vector db
+            try { $rag->collectPageText($page, $cfg); }
+            catch (WireException $e) { $this->wire('log')->save('chatai', 'Index error: '.$e->getMessage()); }
+
         });
     }
 
