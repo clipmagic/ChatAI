@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+.Spotlight-V100
+.Trashes
+.fseventsd
+._*
+
+# Editors/IDEs
+.idea/
+*.iml
+.vscode/
+
+# PHP / tooling (keep any you use)
+vendor/
+composer.lock        # keep if this is an app; ignore if it's a library
+.phpunit.result.cache
+.php-cs-fixer.cache
+coverage/
+
+# JS build outputs (if present)
+node_modules/
+dist/
+build/src/RAG.php-old2
