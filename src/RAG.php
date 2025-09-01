@@ -1,138 +1,86 @@
 <?php namespace ProcessWire;
 /**
- * RAG — cleaned & slot‑aware
- * - Numeric lang_id everywhere (no alpha codes)
- * - Per-chunk storage with soft sentence boundaries
- * - FULLTEXT prefilter (by lang_id) + cosine re‑rank
- * - Slot/fallback fields (e.g. "title|headline, summary, body")
- * - Safer language fan‑out + integer casting on retrieval
+ * RAG – ProcessWire-centric, render-first version
+ *
+ * What this version does:
+ * - Treats the page as the source of truth. We render a dedicated view (e.g. /site/templates/chatai-rag.php)
+ *   using $files->render('chatai-rag.php', ['page' => $page]) to get clean, chrome-free HTML.
+ * - Convert that HTML to plain text (preserving bullets/numbered lists) with WireTextTools->markupToText.
+ * - Chunk the text, embed each chunk (OpenAI text-embedding-3-small), and store rows in chatai_vec_chunks.
+ * - Retrieval: FULLTEXT prefilter by lang_id, cosine re-rank on embeddings.
+ *
+ * What it does NOT do:
+ * - No field-slot config, no skip-lists. The chatai-rag.php view defines what content is in scope.
+ * - No ingestion queue. Keep it simple. Call collectPageText($page, $cfg) when you need to (e.g. on save).
+ *
+ * Assumptions:
+ * - Table name for vectors: chatai_vec_chunks (schema includes INT chunk_index and INT lang_id)
+ * - Config keys you already use elsewhere, plus:
+ *     - 'context_templates': array or pipe string of template names eligible for indexing (e.g. "basic-page|product")
+ *     - 'rag_view': the template partial to render (default 'chatai-rag.php')
+ * - Numeric language IDs only (PW Languages module IDs). Single-language sites use lang_id = 0.
  */
-
 class RAG extends Wire {
     /*** TABLE NAMES ***/
-    public const CHATAI_VEC_TABLE    = 'chatai_vec_chunks';
-    public const CHATAI_DOCS_TABLE   = 'chatai_docs';
-    public const CHATAI_BLOCKS_TABLE = 'chatai_doc_blocks';
+    public const CHATAI_VEC_TABLE = 'chatai_vec_chunks';
 
-    public function __construct() {
-        parent::__construct();
-    }
+    public function __construct() { parent::__construct(); }
 
     /*************************
-     * 1) CONFIG RESOLVERS   *
+     * 1) CONFIG HELPERS     *
      *************************/
 
-    /** Whether we already have vectors for a page */
-    public function hasVectorsForPage(int $pageId): bool {
-        $db = $this->wire('database');
-        $stmt = $db->prepare("SELECT 1 FROM `".self::CHATAI_VEC_TABLE."` WHERE page_id=? LIMIT 1");
-        $stmt->execute([$pageId]);
-        return (bool) $stmt->fetchColumn();
-    }
-
     /**
-     * Templates to index. Accepts array or pipe/CSV string; returns ["basic-page","product",...]
+     * Return list of template names eligible for indexing (KISS: supports array or pipe string).
+     * Examples:
+     *   - 'basic-page|product' => ['basic-page','product']
+     *   - ['basic-page','product'] stays as-is
      */
     protected function getConfiguredContextTemplates(array $cfg): array {
         $tpls = $cfg['context_templates'] ?? [];
-        if (is_string($tpls)) {
-            // support either "basic-page|product" or "basic-page, product"
-            $tpls = preg_split('/[|,\n\r]+/', $tpls) ?: [];
-        }
+        if (is_string($tpls)) $tpls = explode('|', $tpls);
         $tpls = array_values(array_unique(array_filter(array_map('trim', $tpls))));
         return $tpls;
     }
 
-    /**
-     * Fields to index (slot + fallbacks).
-     * Input examples:
-     *   - "title|headline, summary, body"
-     *   - ["title|headline","summary","body"]
-     *   - [["title","headline"],["summary"],["body"]]
-     * Output: [["title","headline"],["summary"],["body"]]
-     */
-/*    protected function getConfiguredContextFields(array $cfg): array {
-        $raw = $cfg['context_fields'] ?? [];
-
-        // Normalize into array of strings OR array of arrays
-        if (is_string($raw)) {
-            $items = preg_split('/[,\n\r]+/', $raw) ?: [];
-            $items = array_map('trim', $items);
-        } elseif (is_array($raw)) {
-            $items = $raw;
-        } else {
-            $items = [];
-        }
-
-        $slots = [];
-        foreach ($items as $it) {
-            if (is_array($it)) {
-                $alts = array_values(array_filter(array_map('trim', $it)));
-            } else {
-                $alts = array_values(array_filter(array_map('trim', explode('|', (string)$it))));
-            }
-            if ($alts) $slots[] = $alts;
-        }
-
-        // Ensure a title-ish slot exists
-        $hasTitleish = false;
-        foreach ($slots as $alts) {
-            $low = array_map('strtolower', $alts);
-            if (in_array('title', $low, true) || in_array('headline', $low, true)) { $hasTitleish = true; break; }
-        }
-        if (!$hasTitleish) array_unshift($slots, ['title','headline']);
-
-        return $slots;
-    }*/
-    public function getConfiguredContextFields(array $cfg): array
-    {
-        $sanitizer = $this->wire('sanitizer');
-        $raw = $cfg['context_fields'] ?? [];
-        $items = explode('|', $raw);
-        array_unshift($items, 'title','headline');
-bd($items);
-
-        $slots  = [];
-        foreach($items as $item) {
-            $slots[] = $sanitizer->text($item);
-        }
-        return $slots;
-    }
-    /** Page eligibility: template match AND at least one configured field present */
+    /** Page must use a configured template to be indexed. */
     public function shouldIndexPage(Page $page, array $cfg): bool {
         $tpls = $this->getConfiguredContextTemplates($cfg);
-        if ($tpls) {
-            $tplName = $page->template instanceof Template ? $page->template->name : (string)$page->template;
-            if (!in_array($tplName, $tpls, true)) return false;
-        }
-        $slots = $this->getConfiguredContextFields($cfg);
-        foreach ($slots as $f) {
-                if ($page->template->hasField($f)) return true;
-        }
-        return false;
+        if (!$tpls) return false;
+        return in_array($page->template->name, $tpls, true);
+    }
+
+    /** Quick probe: does any vector exist for this page? */
+    public function hasVectorsForPage(int $pageId): bool {
+        $db = $this->wire('database');
+        $stmt = $db->prepare("SELECT 1 FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? LIMIT 1");
+        $stmt->execute([$pageId]);
+        return (bool) $stmt->fetchColumn();
     }
 
     /**********************
      * 2) LOW-LEVEL TOOLS *
      **********************/
+
+    /**
+     * Chunk text on sentence boundaries when possible, with overlap, preserving paragraphs.
+     */
     protected function chunkTextByChars(string $text, int $chunk = 1200, int $overlap = 150): array {
-        // normalize but keep paragraph breaks
         $t = trim(preg_replace('/[ \t]+/u', ' ', $text));
-        $t = preg_replace('/\R{3,}/u', "\n\n", $t);
+        $t = preg_replace('/\R{3,}/u', "\n\n", $t); // collapse >2 newlines
 
         $out = [];
         $len = function_exists('mb_strlen') ? mb_strlen($t, 'UTF-8') : strlen($t);
         if ($len === 0) return $out;
 
         $i = 0;
-        $slop = 200;                                       // small lookahead for nicer boundaries
-        $minBoundary = (int) max(200, floor($chunk * 0.66)); // don't end too early
+        $slop = 200;                                      // lookahead for nicer boundaries
+        $minBoundary = (int) max(200, floor($chunk * 0.66));
 
         while ($i < $len) {
             $maxWindow = min($len - $i, $chunk + $slop);
             $window = function_exists('mb_substr') ? mb_substr($t, $i, $maxWindow, 'UTF-8') : substr($t, $i, $maxWindow);
 
-            // find last sentence boundary (., !, ?) after minBoundary within the window
             $searchLen = function_exists('mb_strlen') ? mb_strlen($window, 'UTF-8') : strlen($window);
             $last = -1;
             foreach (['.', '!', '?'] as $p) {
@@ -140,9 +88,7 @@ bd($items);
                 if ($pos !== false && $pos >= $minBoundary && $pos > $last) $last = $pos;
             }
 
-            $slice = '';
             if ($last !== -1) {
-                // include trailing quotes/brackets after punctuation if present
                 $endIdx = $last + 1;
                 while ($endIdx < $searchLen) {
                     $ch = function_exists('mb_substr') ? mb_substr($window, $endIdx, 1, 'UTF-8') : substr($window, $endIdx, 1);
@@ -151,42 +97,33 @@ bd($items);
                 }
                 $slice = function_exists('mb_substr') ? mb_substr($window, 0, $endIdx, 'UTF-8') : substr($window, 0, $endIdx);
             } else {
-                // hard cut
                 $slice = function_exists('mb_substr') ? mb_substr($window, 0, min($chunk, $searchLen), 'UTF-8') : substr($window, 0, min($chunk, $searchLen));
             }
 
             $slice = trim($slice);
             if ($slice === '') break;
-
             $out[] = $slice;
 
-            // advance from the actual slice end, then apply overlap
             $sliceLen = function_exists('mb_strlen') ? mb_strlen($slice, 'UTF-8') : strlen($slice);
             $end = $i + $sliceLen;
             if ($end >= $len) break;
 
             $next = $end - $overlap;
-
-            // advance start index to a safe boundary to avoid mid-word starts
             if ($next < $len) {
-                $lookahead = 40; // chars to search ahead for a boundary
-                $probe = mb_substr($t, $next, min($lookahead, $len - $next), 'UTF-8');
-
-                // if we're not already at whitespace/newline
+                $lookahead = 40;
+                $probe = function_exists('mb_substr') ? mb_substr($t, $next, min($lookahead, $len - $next), 'UTF-8') : substr($t, $next, min($lookahead, $len - $next));
                 if ($probe !== '' && preg_match('/^\S/u', $probe)) {
-                    // jump to the next whitespace or punctuation
                     if (preg_match('/[ \t\r\n\.\!\?,;:\"\'\)\]\}]/u', $probe, $m, PREG_OFFSET_CAPTURE)) {
                         $next += $m[0][1];
-                        // then skip any following whitespace/newlines
                         while ($next < $len) {
-                            $ch = mb_substr($t, $next, 1, 'UTF-8');
+                            $ch = function_exists('mb_substr') ? mb_substr($t, $next, 1, 'UTF-8') : substr($t, $next, 1);
                             if ($ch === ' ' || $ch === "\t" || $ch === "\n" || $ch === "\r") $next++;
                             else break;
                         }
                     }
                 }
             }
-            if ($next <= $i) $next = $end; // guard against non-progress if overlap >= slice
+            if ($next <= $i) $next = $end; // guard against non-progress
             $i = $next;
         }
 
@@ -219,18 +156,10 @@ bd($items);
         return $json['data'][0]['embedding'];
     }
 
-    /*********************************
-     * 3) PAGE → TEXT → CHUNKS/EMBED *
-     *********************************/
-
-    /** get clean text */
-    protected function toPlainText($value): string {
-//        if ($value instanceof \ProcessWire\WireArray) return '';        // repeaters/PageArrays: TODO
-//        if (is_object($value) && method_exists($value, '__toString')) $value = (string)$value;
-//        if (!is_string($value)) return '';
-
+    /** Convert HTML to plain text, preserving lists and spacing */
+    protected function toPlainText(string $html): string {
         $wireTextTools = new WireTextTools();
-        return trim($wireTextTools->markupToText($value, [
+        return trim($wireTextTools->markupToText($html, [
             'convertEntities'    => true,
             'splitBlocks'        => "\n\n",
             'listItemPrefix'     => '• ',
@@ -242,398 +171,157 @@ bd($items);
         ]));
     }
 
-    /** Resolve and concatenate all configured fields in this slot (in order). */
-    protected function resolveSlotValue(Page $page, array $alts): string
-    {
-        $buf = [];
-        foreach ($alts as $f) {
-            if (!$page->template->hasField($f)) {
-                continue;
-            }
-            $raw = $page->get($f);
-            $txt = $this->toPlainText($raw);
-            if ($txt !== '') {
-                $buf[] = $txt;
-            }
-        }
-        return implode("
+    /*********************************
+     * 3) RENDER → TEXT → CHUNKS     *
+     *********************************/
 
-", $buf);
-    }
-
-    protected function renderFld(Page $page, array $fnames): string
-    {
-        $buf = [];
-        foreach ($fnames as $fname) {
-            if (!$page->hasField($fname)) {
-                continue;
-            }
-            $pageFld = $page->get($fname);
-            $fields = $this->wire('fields');
-
-            $fieldType = $fields->get($fname)->getFieldType();
-
-            switch ($fieldType) {
-                case 'FieldtypeRepeater':
-                    foreach ($pageFld as $child) {
-                        foreach ($child->fields as $field) {
-                            $txt = $this->toPlainText($child->$field);
-                            if ($txt !== '') {
-                                $buf[] = $txt;
-                            }
-                        }
-                    }
-                    break;
-
-                default:
-                    // it's a single field type
-                    $txt = $this->toPlainText($page->render($fname));
-                    if ($txt !== '') {
-                        $buf[] = $txt;
-                    break;
-
-            }
-        }
-    }
-        return implode("", $buf);
-    }
-
-
-
-
-/** assemble page text across configured slots */
-protected function assembleText(Page $page, array $cfg): string {
-    $slots = $this->getConfiguredContextFields($cfg);
-
-    $parts = [];
-    foreach ($slots as $v) {
-   //     $v = $this->resolveSlotValue($page, $alts);
-        $v = $this->renderFld($page, $slots);
-        if ($v !== '') $parts[] = $v;
-    }
-    return implode("\n\n", $parts);
-}
-
-/** delete vectors for a page (optionally a single lang) */
-public function deletePageVectors(Page $page, ?int $langId=null): void {
-    $db = $this->wire('database');
-    if ($langId === null) {
-        $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=?");
-        $stmt->execute([$page->id]);
-    } else {
-        $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? AND lang_id=?");
-        $stmt->execute([$page->id, $langId]);
-    }
-}
-
-/** index one language worth of text into per-chunk rows */
-protected function indexPageTextChunks(Page $page, int $langId, string $text): void {
-    $db = $this->wire('database');
-    // Replace rows for this page/lang
-    $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? AND lang_id=?")
-        ->execute([$page->id, $langId]);
-
-    if ($text === '') return; // nothing to index
-
-    $chunks = $this->chunkTextByChars($text);
-    if (!$chunks) return;
-
-    $now = date('Y-m-d H:i:s');
-    $stmtIns = $db->prepare(
-        "INSERT INTO `" . self::CHATAI_VEC_TABLE . "` 
-            (doc_id, block_id, page_id, lang_id, chunk_index, source_url, title, text, embedding_csv, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-    );
-
-    $url = $page->httpUrl(true);
-    $title = (string)$page->title;
-    $idx = 0;
-    foreach ($chunks as $c) {
-        $vec = $this->embedText($c);
-        $csv = $this->packCsv($vec);
-        $stmtIns->execute([null, null, $page->id, $langId, $idx++, $url, $title, $c, $csv, $now, $now]);
-    }
-}
-
-/** orchestrate all languages using PW Languages */
-public function collectPageText(Page $page, array $cfg): void {
-    if (!$this->shouldIndexPage($page, $cfg)) return;
-
-    $languages = $this->wire('languages');
-    $user = $this->wire('user');
-    $origLang = $user && $user->language ? $user->language : null;
-
-    if (!$languages) {
-        $text = $this->assembleText($page, $cfg);
-        $this->indexPageTextChunks($page, 0, $text); // 0 = single-lang site
-        return;
-    }
-
-    foreach ($languages as $lang) {
-        $user->setLanguage($lang);
-        $langId = (int)$lang->id;
-        $text = $this->assembleText($page, $cfg);
-        $this->indexPageTextChunks($page, $langId, $text);
-    }
-
-    if ($origLang) $user->setLanguage($origLang);
-}
-
-/****************
- * 4) RETRIEVAL *
- ****************/
-public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
-    $db = $this->wire('database');
-    $qVec = $this->embedText($query);
-
-    $rows = [];
-    try {
-        $stmt = $db->prepare(
-            "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
-                  LIMIT ?"
-        );
-        $stmt->execute([$userLangId, $query, $prefilter]);
-        $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-    } catch (\Exception $e) {
-        $rows = [];
-    }
-
-    if (!$rows) {
-        // No FT hit for this lang; widen a bit but bounded
-        $stmt2 = $db->prepare(
-            "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=?
-                  LIMIT 200"
-        );
-        $stmt2->execute([$userLangId]);
-        $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-    }
-
-    $scored = [];
-    foreach ($rows as $r) {
-        $vec = $this->unpackCsv($r['embedding_csv']);
-        $score = $this->cosine($qVec, $vec);
-        $scored[] = [
-            'id'          => (int)$r['id'],
-            'page_id'     => (int)$r['page_id'],
-            'lang_id'     => (int)$r['lang_id'],
-            'chunk_index' => (int)$r['chunk_index'],
-            'title'       => (string)$r['title'],
-            'text'        => (string)$r['text'],
-            'source_url'  => (string)$r['source_url'],
-            'score'       => (float)$score,
-        ];
-    }
-    usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
-    return array_slice($scored, 0, $k);
-}
-
-public function buildContextFromChunks(array $chunks, int $maxChars = 2400): string {
-    $buf = '';
-    foreach ($chunks as $c) {
-        $snippet = trim($c['text']);
-        $add = "\n\n[Source: {$c['title']} | {$c['source_url']} | lang_id={$c['lang_id']}]\n" . $snippet;
-        if (strlen($buf) + strlen($add) > $maxChars) break;
-        $buf .= $add;
-    }
-    return ltrim($buf);
-}
-
-public function answerWithRAG(string $userText, ?int $userLangId = null): string {
-    if ($userLangId === null) {
-        $languages = $this->wire('languages');
-        $lang   = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
-        $userLangId = $lang ? (int)$lang->id : 0;
-    }
-    $top = $this->retrieveTopK($userText, $userLangId, 6);
-    $context = $this->buildContextFromChunks($top);
-
-    $system = method_exists($this, 'getPrompt') ? $this->getPrompt() : '';
-    $system .= "\n\nWhen site context is provided below, answer using it. If context is empty, give a brief helpful answer and offer to focus on site content if preferred.";
-
-    $messages = [
-        ['role'=>'system','content'=>$system],
-        ['role'=>'user','content'=>$userText . ($context ? "\n\nContext:\n".$context : '')]
-    ];
-    // return $this->callChat($messages);
-    return '[stub] integrate with your chat call';
-}
-
-/****************************************
- * 5) OPTIONAL: INGESTION QUEUE + ADAPTER
- ****************************************/
-public function enqueuePageDoc(Page $page, ?int $langId = null, array $meta = []): void {
-    $db = $this->wire('database');
-    $now = date('Y-m-d H:i:s');
-    $stmt = $db->prepare("INSERT INTO `".self::CHATAI_DOCS_TABLE."` (source, src_ptr, page_id, lang_id, backend, status, attempts, created_at, updated_at, meta_json) VALUES (?,?,?,?, 'docling', 'pending', 0, ?, ?, ?)");
-    $stmt->execute(['page', null, $page->id, $langId, $now, $now, json_encode($meta)]);
-}
-
-public function claimNextDoc(int $leaseSeconds = 60): ?array {
-    $db = $this->wire('database');
-    $db->beginTransaction();
-    $row = $db->query("SELECT id FROM `".self::CHATAI_DOCS_TABLE."` WHERE (status='pending' OR (status='leased' AND leased_until < NOW())) ORDER BY id ASC LIMIT 1 FOR UPDATE")->fetch(\PDO::FETCH_ASSOC);
-    if (!$row) { $db->commit(); return null; }
-    $id = (int)$row['id'];
-    $until = date('Y-m-d H:i:s', time() + $leaseSeconds);
-    $up = $db->prepare("UPDATE `".self::CHATAI_DOCS_TABLE."` SET status='leased', leased_until=?, updated_at=? WHERE id=?");
-    $up->execute([$until, date('Y-m-d H:i:s'), $id]);
-    $doc = $db->query("SELECT * FROM `".self::CHATAI_DOCS_TABLE."` WHERE id=".$id)->fetch(\PDO::FETCH_ASSOC);
-    $db->commit();
-    return $doc ?: null;
-}
-
-public function processDoc(array $doc, array $cfg): void {
-    $db = $this->wire('database');
-    $now = date('Y-m-d H:i:s');
-    $blocks = [];
-
-    try {
-        if ($doc['source'] === 'page') {
-            $page = $this->wire('pages')->get((int)$doc['page_id']);
-            if (!$page->id) throw new WireException('Page not found');
-
-            // per-language fanout
-            $languages = $this->wire('languages');
-            $user = $this->wire('user');
-            $origLang = $user && $user->language ? $user->language : null;
-            if ($languages) {
-                foreach ($languages as $lang) {
-                    if ($doc['lang_id'] !== null && (int)$doc['lang_id'] !== (int)$lang->id) continue;
-                    $user->setLanguage($lang);
-                    $langId = (int)$lang->id;
-                    $blocks = $this->extractPageBlocks($page, $cfg, $langId);
-                    $this->persistBlocksAndVectors((int)$doc['id'], $blocks, $page);
-                }
-                if ($origLang) $user->setLanguage($origLang);
-            } else {
-                $blocks = $this->extractPageBlocks($page, $cfg, 0);
-                $this->persistBlocksAndVectors((int)$doc['id'], $blocks, $page);
-            }
+    /** Delete all vectors for a page (optionally limited to one lang). */
+    public function deletePageVectors(Page $page, ?int $langId=null): void {
+        $db = $this->wire('database');
+        if ($langId === null) {
+            $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=?");
+            $stmt->execute([$page->id]);
         } else {
-            // 'file'|'url' – call external extractor and normalize
-            $raw = $this->callExtractor((string)$doc['src_ptr'], (string)($doc['backend'] ?: 'docling'));
-            $blocks = $this->normalizeExtracted($raw, (string)($doc['backend'] ?: 'docling'));
-            $this->persistBlocksAndVectors((int)$doc['id'], $blocks, null);
+            $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? AND lang_id=?");
+            $stmt->execute([$page->id, $langId]);
         }
-
-        $up = $db->prepare("UPDATE `".self::CHATAI_DOCS_TABLE."` SET status='done', updated_at=? WHERE id=?");
-        $up->execute([$now, (int)$doc['id']]);
-    } catch (\Throwable $e) {
-        $up = $db->prepare("UPDATE `".self::CHATAI_DOCS_TABLE."` SET status='failed', attempts=attempts+1, error_text=?, updated_at=? WHERE id=?");
-        $up->execute([substr($e->getMessage(),0,2000), $now, (int)$doc['id']]);
     }
-}
 
-/** extract text blocks from a PW page by configured fields */
-protected function extractPageBlocks(Page $page, array $cfg, int $langId): array {
-    $slots = $this->getConfiguredContextFields($cfg);
-    $blocks = [];
-    $i = 0;
-    foreach ($slots as $alts) {
-        $txt = $this->resolveSlotValue($page, $alts);
-        if ($txt === '') continue;
-        $blocks[] = [
-            'block_index' => $i++,
-            'lang_id'     => $langId,
-            'kind'        => 'field:' . implode('|', $alts),
-            'text'        => $this->wire('sanitizer')->textarea($txt),
-            'meta'        => ['page_id' => (int)$page->id, 'fields' => $alts]
-        ];
-    }
-    return $blocks;
-}
+    /** Insert per-chunk rows for one language. */
+    protected function indexPageTextChunks(Page $page, int $langId, string $text): void {
+        $db = $this->wire('database');
+        // replace rows for (page, lang)
+        $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? AND lang_id=?")
+            ->execute([$page->id, $langId]);
 
-/** persist blocks → chunk/embed → vec rows */
-protected function persistBlocksAndVectors(int $docId, array $blocks, ?Page $pageOrNull): void {
-    $db = $this->wire('database');
-    $now = date('Y-m-d H:i:s');
+        $text = trim($text);
+        if ($text === '') return;
 
-    $insB = $db->prepare("INSERT INTO `".self::CHATAI_BLOCKS_TABLE."` (doc_id, block_index, lang_id, kind, text, meta_json, created_at) VALUES (?,?,?,?,?,?,?)");
-    $insV = $db->prepare(
-        "INSERT INTO `".self::CHATAI_VEC_TABLE."` (doc_id, block_id, page_id, lang_id, chunk_index, source_url, title, text, embedding_csv, created_at, updated_at) 
+        $chunks = $this->chunkTextByChars($text);
+        if (!$chunks) return;
+
+        $now = date('Y-m-d H:i:s');
+        $stmtIns = $db->prepare(
+            "INSERT INTO `" . self::CHATAI_VEC_TABLE . "`
+             (doc_id, block_id, page_id, lang_id, chunk_index, source_url, title, text, embedding_csv, created_at, updated_at)
              VALUES (?,?,?,?,?,?,?,?,?,?,?)"
-    );
+        );
 
-    foreach ($blocks as $b) {
-        $insB->execute([$docId, (int)$b['block_index'], (int)($b['lang_id'] ?? 0), (string)$b['kind'], (string)$b['text'], json_encode($b['meta'] ?? []), $now]);
-        $blockId = (int)$db->lastInsertId();
-
-        $chunks = $this->chunkTextByChars((string)$b['text']);
-        $i = 0;
+        $url = $page->httpUrl(true);
+        $title = (string)$page->title;
+        $idx = 0;
         foreach ($chunks as $c) {
             $vec = $this->embedText($c);
             $csv = $this->packCsv($vec);
-            $insV->execute([
-                $docId,
-                $blockId,
-                $pageOrNull ? $pageOrNull->id : 0,
-                (int)($b['lang_id'] ?? 0),
-                $i++,
-                $pageOrNull ? $pageOrNull->httpUrl(true) : null,
-                $pageOrNull ? (string)$pageOrNull->title : ($b['meta']['title'] ?? null),
-                $c,
-                $csv,
-                $now,
-                $now
-            ]);
+            $stmtIns->execute([null, null, $page->id, $langId, (int)$idx++, $url, $title, $c, $csv, $now, $now]);
         }
     }
-}
 
-/** call an external extractor – stub */
-protected function callExtractor(string $pathOrUrl, string $backend = 'docling'): array {
-    return [];
-}
+    /**
+     * Orchestrate rendering the RAG view and indexing into vectors for each language.
+     * - Uses PW to switch $user->language, render, and switch back.
+     * - Uses $files->render($view, ['page' => $page]) – if the view is missing, PW will throw.
+     */
+    public function collectPageText(Page $page, array $cfg): void {
+        if (!$this->shouldIndexPage($page, $cfg)) return;
 
-/** normalize extractor-specific payloads into our minimal blocks[] schema */
-protected function normalizeExtracted(array $raw, string $backend): array {
-    $blocks = [];
-    $i = 0;
-    if ($backend === 'docling') {
-        foreach (($raw['elements'] ?? []) as $el) {
-            $txt = trim((string)($el['text'] ?? ''));
-            if ($txt === '') continue;
-            $blocks[] = [
-                'block_index' => $i++,
-                'lang_id'     => isset($el['lang']) ? (int)$el['lang'] : 0,
-                'kind'        => strtolower((string)($el['type'] ?? 'paragraph')),
-                'text'        => $txt,
-                'meta'        => $el['meta'] ?? []
-            ];
-        }
-    } else if ($backend === 'unstructured') {
-        foreach (($raw['elements'] ?? []) as $el) {
-            $txt = trim((string)($el['text'] ?? ''));
-            if ($txt === '') continue;
-            $blocks[] = [
-                'block_index' => $i++,
-                'lang_id'     => 0, // map ISO→PW id in your app if needed
-                'kind'        => strtolower((string)($el['type'] ?? 'paragraph')),
-                'text'        => $txt,
-                'meta'        => $el['metadata'] ?? []
-            ];
+        $files = $this->wire('files');
+        $view  = $cfg['rag_view'] ?? 'chatai-rag.php';
+
+        $languages = $this->wire('languages');
+        $user = $this->wire('user');
+
+        if ($languages && $languages->count()) {
+            $origLang = $user && $user->language ? $user->language : null;
+            foreach ($languages as $lang) {
+                $user->setLanguage($lang);
+                $langId = (int)$lang->id;
+                $html = $files->render($view, ['page' => $page]); // PW will error if not found
+                $text = $this->toPlainText($html);
+                $this->indexPageTextChunks($page, $langId, $text);
+            }
+            if ($origLang) $user->setLanguage($origLang);
+        } else {
+            // single-language site – use lang_id = 0
+            $html = $files->render($view, ['page' => $page]);
+            $text = $this->toPlainText($html);
+            $this->indexPageTextChunks($page, 0, $text);
         }
     }
-    return $blocks;
-}
 
-/** Worker helpers */
-public function workerOnce(array $cfg, string $backend = 'docling'): ?int {
-    $doc = $this->claimNextDoc();
-    if (!$doc) return null;
-    $this->processDoc($doc, $cfg);
-    return (int)$doc['id'];
-}
+    /****************
+     * 4) RETRIEVAL *
+     ****************/
 
-public function workerLoop(array $cfg, string $backend = 'docling', int $max = 50): void {
-    for ($i=0; $i<$max; $i++) {
-        $id = $this->workerOnce($cfg, $backend);
-        if ($id === null) break;
+    /**
+     * FULLTEXT prefilter (per lang), cosine rerank.
+     * $prefilter bounds the initial candidate count – tune for your content size.
+     */
+    public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
+        $db = $this->wire('database');
+        $qVec = $this->embedText($query);
+
+        try {
+            $stmt = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+                   FROM `" . self::CHATAI_VEC_TABLE . "`
+                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+                  LIMIT ?"
+            );
+            $stmt->execute([$userLangId, $query, $prefilter]);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            $rows = [];
+        }
+
+        if (!$rows) {
+            $stmt2 = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+                   FROM `" . self::CHATAI_VEC_TABLE . "`
+                  WHERE lang_id=?
+                  LIMIT 200"
+            );
+            $stmt2->execute([$userLangId]);
+            $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        }
+
+        $scored = [];
+        foreach ($rows as $r) {
+            $vec = $this->unpackCsv($r['embedding_csv']);
+            $r['score'] = $this->cosine($qVec, $vec);
+            $scored[] = $r;
+        }
+        usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
+        return array_slice($scored, 0, $k);
     }
-}
+
+    /** Build a compact context string from chunks (bounded by $maxChars). */
+    public function buildContextFromChunks(array $chunks, int $maxChars = 2400): string {
+        $buf = '';
+        foreach ($chunks as $c) {
+            $snippet = trim($c['text']);
+            $add = "\n\n[Source: {$c['title']} | {$c['source_url']} | lang_id={$c['lang_id']}]\n" . $snippet;
+            if (strlen($buf) + strlen($add) > $maxChars) break;
+            $buf .= $add;
+        }
+        return ltrim($buf);
+    }
+
+    /**
+     * Example glue to your chat call – kept as a stub.
+     * Construct messages with the built context and call your existing ChatAI chat method.
+     */
+    public function answerWithRAG(string $userText, ?int $userLangId = null): string {
+        if ($userLangId === null) {
+            $languages = $this->wire('languages');
+            $lang = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
+            $userLangId = $lang ? (int)$lang->id : 0;
+        }
+        $top = $this->retrieveTopK($userText, $userLangId, 6);
+        $context = $this->buildContextFromChunks($top);
+
+        // TODO: integrate with your existing chat call. For now, return the context for inspection.
+        return $context !== '' ? $context : '[no site context matched – try another query]';
+    }
 }
 // end
