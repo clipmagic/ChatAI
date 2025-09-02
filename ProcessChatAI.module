@@ -226,14 +226,15 @@ class ProcessChatAI extends Process
             $inputfieldsArray = $tab->getAll();
 
             foreach($inputfieldsArray as $tabField) {
-                if($tabField->count === 0 ) continue;
+                if ($tabField->count === 0) continue;
                 $fldName = $tabField->attributes['name'];
-                if($fldName === '' || $fldName === 'submit' || $fldName === '_InputfieldForm' || str_starts_with($fldName, 'TOKEN')) continue;
-                if($user->language->isDefault() || empty($tabField->useLanguages)) {
+                if ($fldName === '' || $fldName === 'submit' || $fldName === '_InputfieldForm' || str_starts_with($fldName, 'TOKEN')) continue;
+                if ($user->language->isDefault() || empty($tabField->useLanguages)) {
                     $data[$fldName] = $form->getValueByName($fldName);
                 } else {
-                    $data[$fldName] = !empty($tabField->getLanguageValue($user->language)) ? $tabField->getLanguageValue($user->language) : $form->getValueByName($fldName);
-                    $data[$fldName] = !empty($tabField->getLanguageValue($user->language)) ? $tabField->getLanguageValue($user->language) : $form->getValueByName($fldName);
+                    $data[$fldName] = !empty($tabField->getLanguageValue($user->language))
+                        ? $tabField->getLanguageValue($user->language)
+                        : $form->getValueByName($fldName);
                 }
             }
         }
@@ -256,7 +257,7 @@ class ProcessChatAI extends Process
             $stmt->bindValue(1, $json, \PDO::PARAM_STR);
             return $stmt->execute();
         } catch(\Throwable $e) {
-            wire('log').save('chatai', "savePromptSettingsJson failed: " . $e->getMessage());
+            $this->wire('log')->save('chatai', "savePromptSettingsJson failed: " . $e->getMessage());
             $this->error($this->_('Failed to save settings.'));
             return false;
         }
@@ -321,7 +322,7 @@ class ProcessChatAI extends Process
         $prompt = '';
         // Assemble your safe default system prompt
         if(!empty($botname)) {
-            $prompt .= "You  are {$botname}";
+            $prompt .= "You are {$botname}";
                 if (!empty($botrole)) {
                     $prompt .= ", a {$botrole}";
                     if (!empty($bizname))

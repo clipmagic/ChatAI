@@ -9,7 +9,6 @@ use stdClass;
 
 class ChatAI extends WireData implements Module, ConfigurableModule
 {
-
     const dbTableName = 'chatai';
 
     const dbTablePrompt = 'chatai_prompt';
@@ -280,7 +279,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $p;
     }
 
-    public function sendMessage($data, $lang = null) : mixed
+/*    public function sendMessage($data, $lang = null) : mixed
     {
 
         bd($data);
@@ -399,16 +398,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     $langID   = (int) $this->wire('sanitizer')->int($lang);
                     $userLang = $languages->get($langID); // id or name both work
 
-//                    if ($userLang instanceof \ProcessWire\Language) {
-//                        // request-scope switch
-//                        $this->wire('user')->setLanguage($userLang);
-//                        // or: $languages->setLanguage($userLang);
-//                    } else {
-//                        $def = $languages->getDefault();
-//                        $this->wire('user')->setLanguage($def);
-//                        $this->wire('log')->save('chatai', "Invalid user language submitted: $langID");
-//                    }
-//
                     try {
                         $languages->setLanguage($lang); // id or name
                     } catch (WireException $e) {
@@ -445,6 +434,357 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $output->error = $output->reply;
         }
         return $output;
+    }*/
+
+/*    public function callModelForText($messagesForApi)
+    {
+        $url = 'https://api.openai.com/v1/chat/completions';
+        $http      = new WireHttp();
+        $output = new stdClass();
+
+        $postData = $this->buildPostData($this->model, $messagesForApi);
+        // Ensure your buildPostData includes temperature / max_tokens from module config
+
+        $http->setHeaders([
+            'Authorization' => 'Bearer ' . $this->api_key,
+            'Content-Type'  => 'application/json'
+        ]);
+
+        $response     = $http->send($url, json_encode($postData), 'POST');
+        $responseData = json_decode($response, true);
+
+        // Unexpected shape
+        if (empty($responseData)) {
+            $this->wire('log')->save('chatai', 'OpenAI: unexpected response');
+            $output->reply = $this->getErrorMessage(6)->msg;
+            $output->error = 'unexpected_response';
+            return $output;
+        }
+
+        if (isset($responseData['choices'][0]['message']['content']))
+            return $responseData['choices'][0]['message']['content'];
+
+        if (isset($responseData['error']['code'])) {
+            // Log and return graceful error
+            $this->wire('log')->save('chatai', $responseData['error']['code']);
+
+            $output->error      = $responseData['error']['code'];
+            $output->chat_error = $responseData['error'];
+            $output->reply      = $this->getErrorMessage(6)->msg; // “Something went wrong”
+            $output->stop       = true;
+            return $output;
+        }
+    }*/
+    /**
+     * Always returns:
+     * (object){
+     *    ok: bool,
+     *    text?: string,            // on success
+     *    error?: string,           // short code, e.g. 'unexpected_response', 'rate_limited'
+     *    chat_error?: array        // raw provider error (optional)
+     * }
+     */
+
+
+    /**
+     * Decide endpoint + normalize body per model family.
+     * Returns [string $url, array $body]
+     */
+    protected function normalizeApiRequest(string $model, $payload): array {
+        // deep-cast stdClass → array for [] access
+        if (is_object($payload)) $payload = json_decode(json_encode($payload), true);
+        $payload = is_array($payload) ? $payload : [];
+
+        $isGpt5 = (stripos($model, 'gpt-5') === 0);
+
+        if ($isGpt5) {
+            // GPT-5 → Responses API with `input`
+            $endpoint = 'https://api.openai.com/v1/responses';
+
+            // Coerce messages into strings
+            $messages = isset($payload['messages']) && is_array($payload['messages']) ? $payload['messages'] : [];
+            foreach ($messages as &$m) {
+                if (!isset($m['role']))    $m['role'] = 'user';
+                if (!isset($m['content'])) $m['content'] = '';
+                if (!is_string($m['content'])) {
+                    $m['content'] = is_scalar($m['content']) ? (string)$m['content'] : json_encode($m['content']);
+                }
+            }
+            unset($m);
+
+            // Map chat messages → Responses `input`
+            $input = [];
+            foreach ($messages as $m) {
+                $input[] = [
+                    'role'    => $m['role'],
+                    'content' => [
+                        ['type' => 'input_text', 'text' => $m['content']]
+                    ],
+                ];
+            }
+            $body = [
+                'model' => (string)$model,
+                'input' => $input,
+            ];
+
+            // tokens/temperature/reasoning mapping stays the same
+            if (isset($payload['max_completion_tokens'])) $body['max_output_tokens'] = (int)$payload['max_completion_tokens'];
+            if (isset($payload['temperature']))           $body['temperature']       = (float)$payload['temperature'];
+            if (!empty($payload['reasoning_effort']))     $body['reasoning']         = ['effort' => (string)$payload['reasoning_effort']];
+            // drop verbosity (not public)
+            return [$endpoint, $body];
+        }
+
+        // Older/chat models → Chat Completions with `messages`
+        $endpoint = 'https://api.openai.com/v1/chat/completions';
+
+        $messages = isset($payload['messages']) && is_array($payload['messages']) ? $payload['messages'] : [];
+        foreach ($messages as &$m) {
+            if (!isset($m['role']))    $m['role'] = 'user';
+            if (!isset($m['content'])) $m['content'] = '';
+            if (!is_string($m['content'])) {
+                $m['content'] = is_scalar($m['content']) ? (string)$m['content'] : json_encode($m['content']);
+            }
+        }
+        unset($m);
+
+        $body = [
+            'model'    => (string)$model,
+            'messages' => $messages,
+        ];
+        if (isset($payload['max_completion_tokens'])) $body['max_tokens']   = (int)$payload['max_completion_tokens'];
+        if (isset($payload['temperature']))           $body['temperature']  = (float)$payload['temperature'];
+        // strip verbosity/reasoning_effort here
+        return [$endpoint, $body];
+    }
+
+    /**
+     * Returns (object){ ok: bool, text?: string, error?: string, chat_error?: array }
+     */
+    public function callModelForText(array $messagesForApi): \stdClass {
+        $o = (object)['ok' => false];
+
+        // Build from your builder (as you already do)
+        $postData = $this->buildPostData($this->model, $messagesForApi);
+        list($url, $body) = $this->normalizeApiRequest($this->model, $postData);
+
+        $http = new \ProcessWire\WireHttp();
+        $http->setHeaders([
+            'Authorization' => 'Bearer ' . $this->api_key,
+            'Content-Type'  => 'application/json',
+            'Accept'        => 'application/json',
+        ]);
+        $http->setTimeout(25);
+
+        try {
+            $response = $http->send($url, json_encode($body), 'POST');
+            if ($response === false) {
+                $this->wire('log')->save('chatai', 'OpenAI transport error: ' . $http->getError());
+                $o->error = 'transport_error';
+                return $o;
+            }
+            $data = json_decode($response, true);
+
+            // If using /responses, prefer new shapes first
+            if (strpos($url, '/responses') !== false) {
+                // Prefer new Responses API shapes
+                if (!empty($data['output']) && is_array($data['output'])) {
+                    foreach ($data['output'] as $seg) {
+                        if (!empty($seg['content']) && is_array($seg['content'])) {
+                            foreach ($seg['content'] as $c) {
+                                $type = $c['type'] ?? '';
+                                if (!empty($c['text']) && ($type === 'output_text' || $type === 'text')) {
+                                    $o->ok = true; $o->text = (string)$c['text']; return $o;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (!empty($data['output_text']) && is_string($data['output_text'])) {
+                    $o->ok = true; $o->text = (string)$data['output_text']; return $o;
+                }
+
+                // Fallback to mirrored chat shape if present
+                if (!empty($data['choices'][0]['message']['content'])) {
+                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
+                }
+            }
+            if (!is_array($data)) {
+                $this->wire('log')->save('chatai', 'OpenAI: unexpected non-JSON response');
+                $o->error = 'unexpected_response';
+                return $o;
+            }
+
+            // Success shapes
+            if (strpos($url, '/responses') !== false) {
+                // Prefer Responses API ‘output’ → content → type=output_text
+                if (!empty($data['output']) && is_array($data['output'])) {
+                    foreach ($data['output'] as $seg) {
+                        if (!empty($seg['content']) && is_array($seg['content'])) {
+                            foreach ($seg['content'] as $c) {
+                                if (($c['type'] ?? '') === 'output_text' && !empty($c['text'])) {
+                                    $o->ok = true; $o->text = (string)$c['text']; return $o;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Some providers still mirror chat ‘choices’
+                if (!empty($data['choices'][0]['message']['content'])) {
+                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
+                }
+            } else {
+                // /chat/completions
+                if (!empty($data['choices'][0]['message']['content'])) {
+                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
+                }
+            }
+
+            // Provider error surfaced
+            if (!empty($data['error'])) {
+                $code = strtolower((string)($data['error']['code'] ?? 'provider_error'));
+                if (in_array($code, ['rate_limit_exceeded','rate_limit','insufficient_quota','throttled'], true)) {
+                    $code = 'rate_limit_exceeded';
+                }
+                $this->wire('log')->save('chatai', 'OpenAI error: ' . $code . ' | ' . ($data['error']['message'] ?? ''));
+                $o->error = $code; $o->chat_error = $data['error'];
+                return $o;
+            }
+
+            // Unexpected success shape — log a snippet so we can see what came back
+            $this->wire('log')->save('chatai', 'OpenAI: missing choices/content | body=' . substr($response, 0, 500));
+            $o->error = 'unexpected_response';
+            return $o;
+
+        } catch (\Throwable $e) {
+            $this->wire('log')->save('chatai', 'OpenAI exception: ' . $e->getMessage());
+            $o->error = 'exception';
+            return $o;
+        }
+    }
+
+    public function sendMessage(string $userMessage, $langId = null): \stdClass
+    {
+        $san = $this->wire('sanitizer');
+        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+
+        $result = (object)[
+            'stop'        => false,
+            'error'       => null,                  // (object){msg:string, warning?:bool} or null
+            'reply'       => null,                  // (object){msg:string} or null
+            'html'        => null,                  // optional trusted HTML
+            'blacklisted' => false,
+            'name'        => null,
+        ];
+
+        // Language switch (soft)
+        if ($langId !== null) {
+            try {
+                $langId = (int)$san->int($langId);
+                $languages = $this->wire('languages');
+                if ($languages && $langId) {
+                    $lang = $languages->get($langId);
+                    if ($lang && $lang->id) $languages->setLanguage($lang);
+                }
+            } catch (\Throwable $e) { /* ignore */ }
+        }
+        if ($chatProcess) $result->name = $chatProcess->getBotName(); // <- use -> not ['']
+
+        // Validate
+        $msg = $san->text($userMessage);
+        if ($msg === '') {
+            $result->error = $this->getErrorMessage(2);
+            return $result;
+        }
+
+        // Limit pre-check
+        $count = $this->msgCountGetAndInit();   // should start at 0
+        if ($count >= (int)$this->max_messages) {
+            $result->stop  = true;
+            $result->error = $this->getErrorMessage(4);
+            return $result;
+        }
+
+        // Blacklist
+        if ($chatProcess->isBlacklisted($msg)) {
+            $result->blacklisted = true;
+            $result->error = (object)['msg' => $this->getErrorMessage(1) ?: 'Message blocked.'];
+            return $result;
+        }
+
+        // Build messages
+        $system = $chatProcess->getPrompt();
+        $messages = [
+            ['role' => 'system', 'content' => $system],
+            ['role' => 'user',   'content' => $msg],
+        ];
+
+        // Model call
+        try {
+            $m = $this->callModelForText($messages); // always object {ok,text?,error?}
+            // Guard against wrong type sneaking in
+            if (is_array($m)) $m = (object)$m;
+
+        } catch (\Throwable $e) {
+            $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
+            $m = (object)['ok' => false, 'error' => 'exception'];
+        }
+
+        // Interpret
+        if (!$m->ok) {
+            $code = !empty($m->error) ? (string)$m->error : 'unknown';
+
+            // Normalize provider “too busy / quota / throttled” signals to case 15
+            if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
+                $result->error = $this->getErrorMessage(15); // object with msg + warning
+                $result->stop  = false;                      // allow retry (your call)
+                return $result;
+            }
+
+            // Everything else → generic failure (case 6)
+            $result->error = $this->getErrorMessage(6);     // object with msg + warning
+            $result->stop  = true;                          // or false, if you want retries
+            return $result;
+        }
+
+        // Model returned success in $m->text
+
+        $raw = (string) $m->text; // expected HTML fragment per your prompt
+
+        // HTML lane — sanitize allowed tags server-side
+        $result->html = $this->wire('sanitizer')->purify($raw);
+
+        // Plain-text fallback (for screen readers / no-HTML environments)
+        $plain = trim(strip_tags($raw));
+        $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
+
+        // Increment + warnings
+        $after     = $this->msgCountInc();
+        $remaining = $this->msgRemaining($after);
+        if ($remaining === 0) {
+            $result->stop  = true;
+            $result->error = $this->getErrorMessage(4);   // “Too many questions. Goodbye.”
+        } elseif ($remaining === 1) {
+            $result->error = $this->getErrorMessage(10);  // “One question left…” (warning=true)
+        }
+        return $result;
+    }
+
+    /** Example helper stubs  */
+    protected function msgCountGetAndInit(): int {
+        $s = $this->wire('session');
+        $v = $s->getFor('chatai', 'count');
+        if ($v === null) { $s->setFor('chatai', 'count', 0); return 0; }
+        $n = (int)$v; return $n < 0 ? 0 : $n;
+    }
+    protected function msgCountInc(): int {
+        $s = $this->wire('session');
+        $n = (int)$s->getFor('chatai', 'count'); $n++;
+        $s->setFor('chatai', 'count', $n);
+        return $n;
+    }
+    protected function msgRemaining(int $after): int {
+        return max(0, ((int)$this->max_messages) - $after);
     }
 
     public function saveToTranscript(string $role, string $content): void {
@@ -569,58 +909,58 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
 
     public function getErrorMessage($number, $val1 = null, $val2 = null) {
-        // TODO remove error messages related to off topic/topics
         $errorMsg = new stdClass();
         switch ($number) {
-            case 1:
+            case 1: // blocked/blacklist
                 $errorMsg->msg = $this->_('You have been blocked. Goodbye.');
                 $errorMsg->warning = true;
                 break;
 
-            case 2:
+            case 2: // empty input
                 $errorMsg->msg = $this->_('No message submitted.');
                 break;
 
-            case 4:
+            case 4: // limit reached
                 $errorMsg->msg = $this->_('Too many questions. Goodbye.');
                 $errorMsg->warning = true;
                 break;
 
-            case 5:
+            case 5: // token budget (optional usage)
                 $errorMsg->msg = $this->_('Insufficient OpenAI tokens');
                 break;
 
-            case 6:
+            case 6: // generic model/transport failure
                 $errorMsg->msg = $this->_("Ooops! Something went wrong. Please try again later.");
                 $errorMsg->warning = true;
                 break;
 
-            case 7:
+            case 7: // rephrase
                 $errorMsg->msg = $this->_('Please rephrase your question');
                 break;
 
-            case 9:
+            case 9: // off-topic (unused)
                 $errorMsg->msg = $this->_('Not blacklisted but off topic');
                 break;
 
-            case 10:
+            case 10: // near-limit warning
                 $errorMsg->msg = $this->_('You have one question left before I have to go. Make it a good one!');
+                $errorMsg->warning = true;
                 break;
 
-            case 11:
+            case 11: // no response (unused)
                 $errorMsg->msg = $this->_('No response');
                 break;
 
-            case 12:
+            case 12: // unexpected API response structure
                 $errorMsg->msg = $this->_('Unexpected API response structure.');
+                break; // <-- add this break
 
-
-            case 13:
+            case 13: // lockout due to repeated inappropriate messages
                 $errorMsg->msg = $this->_('You have been locked out due to repeated inappropriate messages.');
                 $errorMsg->warning = true;
                 break;
 
-            case 14:
+            case 14: // rephrase with counters
                 if(!empty($val1) && !empty($val2)) {
                     $template = $this->_("Please rephrase your question (Warning: %d/%d)");
                     $errorMsg->msg = sprintf($template, $val1, $val2);
@@ -628,6 +968,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 } else {
                     $errorMsg->msg = $this->_("Please rephrase your question.");
                 }
+                break;
+
+            case 15: // rate limited / busy (translatable)
+                $errorMsg->msg = $this->_('We are a bit busy. Please try again shortly.');
+                $errorMsg->warning = true;
                 break;
 
             default:
@@ -833,8 +1178,6 @@ SQL;
 
     /* Install, Upgrade, Uninstall */
 
-
-
     private static function _createDBTables() {
         $db = wire('database');
         // 1. Create tables
@@ -977,7 +1320,6 @@ SQL;
         } catch(\WireException $e) {
             wire('log')->save('errors', 'Failed to create ChatAI tables. ' . $e->getMessage());
         }
-
 
         // 2) Trigger (separate call, no DELIMITER)
         $trigger = <<<SQL

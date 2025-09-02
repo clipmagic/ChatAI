@@ -221,11 +221,23 @@
     color: var(--chat-fg);
 }
 
-.chatbot-submit {
-    background: var(--chat-accent);
-    color: white;
-    border: none;
-    padding: 0.75rem 1rem;
-    cursor: pointer;
-}
 
+
+/*
+ * TODO (nice-to-haves, not urgent)
+ * 1) Focus states: add visible focus rings for .chatbot-toggle, inputs, and buttons (WCAG 2.4.7).
+ * 2) Reduced motion: shorten dialog transition and disable icon micro-animations when prefers-reduced-motion.
+ * 3) High-contrast theme: expose --chat-accent-contrast and tweak .chatbot-msg.bot bg/fg for contrast ≥ 4.5:1.
+ * 4) RTL support: add [dir="rtl"] overrides for alignment (flip .user/.bot align-self and margins).
+ * 5) Typography scale: clamp() font sizes for small screens; ensure .chatbot-messages uses text-wrap: pretty;
+ * 6) Link styling: explicit :focus-visible and :hover states inside bot HTML (a { text-decoration: underline; }).
+ * 7) Code blocks: style inline <code> inside messages; optional pre code block if we allow it later.
+ * 8) Scroll behavior: consider overscroll-behavior: contain; and better scroll-to-bottom on new messages.
+ * 9) Warning color: introduce --chat-warning-bg and --chat-warning-fg for better theming of .chatbot-warning.
+ * 10) Container queries: size dialog using @container instead of viewport where supported.
+ * 11) Mobile spacing: adjust inset/padding at <= 360px; ensure tap targets ≥ 44px.
+ * 12) Print styles: hide the dialog and toggle when printing.
+ * 13) Remaining-messages badge: small, unobtrusive counter in header; aria-live="polite"; only visible when ≤2.
+ * 14) Message reply color: differentiate bot/user bubbles from the submit button. Introduce --chat-reply-bg/fg tokens; avoid using the semi-opaque button color for bubbles.
+ * 15) Close button placement: decide between sticky top-right inside dialog vs overlaying the launcher. Ensure it never scrolls out of view; test z-index, hit area ≥44px, and focus-visible.
+ */
