@@ -201,6 +201,57 @@ bd($page->status(true));
         if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22);
         return $bit;
     }
+
+    //** Hookable methods */
+    /**
+     * Hook: mutate outbound request before sending to the model.
+     * Site code can hook with: $wire->addHookAfter('ProcessChatAI::beforeSend', fn($e) => ...);
+     * @param array $request
+     * @return array
+     */
+    public function ___beforeSend(array $request): array {
+        return $request; // no-op by default
+    }
+
+    /**
+     * Hook: inspect/mutate raw vendor response before normalization.
+     * @param array $rawResponse
+     * @return array
+     */
+    public function ___afterSend(array $rawResponse): array {
+        return $rawResponse; // no-op by default
+    }
+
+    /**
+     * Hook: return an optional HTML fragment for a contextual CTA (or null).
+     * Keep markup to your allowed tags; site sanitizer still runs.
+     * @param array $ctx e.g. ['intent'=>'general','pageUrl'=>'','lang_id'=>0,'turn'=>1,'isBookingPage'=>false]
+     * @return ?string
+     */
+    public function ___composeCTA(array $ctx): ?string {
+        return null; // no CTA by default
+    }
+
+    /**
+     * Hook: last-mile payload tweak before returning JSON to the widget.
+     * @param array $payload
+     * @return array
+     */
+    public function ___afterResponse(array $payload): array {
+        return $payload; // no-op by default
+    }
+
+    /**
+     * Helper used by some sites to suppress CTAs on booking pages.
+     * Sites can hook and override this.
+     */
+    protected function ___isBookingPage(string $url): bool {
+        return false;
+    }
+
+
+
+
     private function registerRagStatusLabel(\ProcessWire\Page $page): void {
         // Resolve configured single-bit (power-of-two), with safety fallback
 //        $bit = $this->ragStatusBit(); // your existing helper

@@ -1383,6 +1383,36 @@ SQL;
 
     }
 
+    /* Hookable methods */
+    // Inside: class ChatAI extends WireData implements Module, ConfigurableModule
+// (place near the bottom of the class)
+
+    /** Hook: mutate outbound request before sending to the model. */
+    public function ___beforeSend(array $request): array {
+        return $request; // no-op by default
+    }
+
+    /** Hook: inspect/mutate raw vendor response before normalisation. */
+    public function ___afterSend(array $rawResponse): array {
+        return $rawResponse; // no-op by default
+    }
+
+    /** Hook: optional contextual CTA HTML fragment (or null). */
+    public function ___composeCTA(array $ctx): ?string {
+        return null; // default: no CTA
+    }
+
+    /** Hook: last-mile payload tweak before returning JSON to the widget. */
+    public function ___afterResponse(array $payload): array {
+        return $payload; // no-op by default
+    }
+
+    /** Helper: sites can override booking page detection via hook. */
+    protected function ___isBookingPage(string $url): bool {
+        return false;
+    }
+
+
     /* Install, Upgrade, Uninstall */
 
     private static function _createDBTables() {
