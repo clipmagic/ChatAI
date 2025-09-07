@@ -15,7 +15,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     const modName = 'ChatAI';
 
-    const statusRag = 4194304;
+   // const statusRag = 4194304;
 
 
 
@@ -1383,10 +1383,7 @@ SQL;
 
     }
 
-    /* Hookable methods */
-    // Inside: class ChatAI extends WireData implements Module, ConfigurableModule
-// (place near the bottom of the class)
-
+    /* Hookable Methods */
     /** Hook: mutate outbound request before sending to the model. */
     public function ___beforeSend(array $request): array {
         return $request; // no-op by default
