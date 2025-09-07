@@ -375,213 +375,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $p;
     }
 
-/*    public function sendMessage($data, $lang = null) : mixed
-    {
-
-        bd($data);
-        bd($lang);
-
-
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $sanitizer = $this->wire('sanitizer');
-
-        // 0) Hard block (blacklist etc.)
-        $allowed = $this->isMessageAllowed($data);
-        if ($allowed->blacklisted) return $allowed;
-
-        $session   = $this->wire('session');
-        $sanitizer = $this->wire('sanitizer');
-        $http      = new WireHttp();
-
-        // 1) Bootstrap transcript (ensure SYSTEM, not assistant)
-        if (empty($session->getFor('chatai', 'transcript'))) {
-            $systemPrompt = $chatProcess->getPrompt(); // your “base” system prompt (static)
-            $transcript   = [];
-            $transcript[] = ['role' => 'system', 'content' => $systemPrompt];
-            $session->setFor('chatai', 'transcript', $transcript);
-        }
-
-        // 2) Current user message (plain text sanitised)
-        $userMsg = $sanitizer->text($data);
-        if ($userMsg === '') {
-            $o = new \stdClass();
-            $o->error = $this->getErrorMessage(2)->msg; // “Empty message”
-            $o->reply = $o->error;
-            $o->stop  = false;
-            return $o;
-        }
-
-        // 3) Build dynamic context from PW pages for THIS question
-        //    (do NOT store in transcript)
-        //    You already have: findRelevantPages(), pageExcerpt(), buildTextContextFromPages()
- //       $settings        = $this->_getSettings(); // or where you store admin config
-
-        $contentFields   = $this->context_fields      ?: 'summary|body';
-        $templatesCsv    = $this->context_templates   ?: 'home|basic-page';
-        $limit           = (int)($this->context_limit ?: 12);
-        $maxExcerptChars = (int)($this->context_snippet_len ?: 200);
-
-        $foundPages = $this->findRelevantPages($userMsg, $contentFields, $templatesCsv, $limit);
-
-        if ($foundPages->count === 0) {
-            $context = "No site context matched this question. " .
-                    "Respond with this pattern:\n" .
-                    "1) One sentence: “I couldn’t find any pages on this site about ‘{$userMsg}’.”\n" .
-                    "2) One focused clarifying question, e.g., “Is there a specific page or section I should check?”\n" .
-                    "3) Keep it under 60 words. No meta commentary, no lists, no apologies.";
-
-        } else {
-            $context    = $this->buildTextContextFromPages($foundPages, $contentFields, $maxExcerptChars);
-        }
-
-        // 4) Build messages FOR THIS CALL:
-        //    [system base], [system context? if any], [prior turns], [current user]
-        $transcript = $session->getFor('chatai', 'transcript');
-
-        // If your transcript is long, you can window it (optional):
-        // $transcriptWindow = array_slice($transcript, -8); // last 8 messages
-
-        $messagesForApi = [];
-        // Always include the base system prompt (first item in transcript)
-        $messagesForApi[] = $transcript[0];
-
-        // Add per-question context as another SYSTEM message (ephemeral)
-        if ($context !== '') {
-            $messagesForApi[] = ['role' => 'system', 'content' => $context];
-        }
-
-        // Add prior conversation (excluding the first system message)
-        if (count($transcript) > 1) {
-            $messagesForApi = array_merge($messagesForApi, array_slice($transcript, 1));
-        }
-
-        // Add current user turn (note: we also append it to transcript right away)
-        $messagesForApi[] = ['role' => 'user', 'content' => $userMsg];
-        $this->saveToTranscript('user', $userMsg);
-
-        // 5) Prepare API request (you’re already using chat/completions)
-        $url = 'https://api.openai.com/v1/chat/completions';
-
-        $postData = $this->buildPostData($this->model, $messagesForApi);
-        // Ensure your buildPostData includes temperature / max_tokens from module config
-
-        $http->setHeaders([
-            'Authorization' => 'Bearer ' . $this->api_key,
-            'Content-Type'  => 'application/json'
-        ]);
-
-        $response     = $http->send($url, json_encode($postData), 'POST');
-        $responseData = json_decode($response, true);
-
-
-
-        $output = new \stdClass();
-
-        if (!empty($responseData)) {
-
-            if (isset($responseData['choices'][0]['message']['content'])) {
-                $answer = $responseData['choices'][0]['message']['content'];
-
-                // Normalise/clean if needed (you already set HTML output rules in system prompt)
-                $output->reply = $answer;
-
-                // Persist the assistant reply in transcript
-                $this->saveToTranscript('assistant', $answer);
-
-                // Add the bot name
-                $languages = $this->wire('languages');
-                if ($languages && $lang !== null && $lang !== '') {
-                    $langID   = (int) $this->wire('sanitizer')->int($lang);
-                    $userLang = $languages->get($langID); // id or name both work
-
-                    try {
-                        $languages->setLanguage($lang); // id or name
-                    } catch (WireException $e) {
-                        $languages->setLanguage($languages->getDefault());
-                        wire('log')->save('chatai', "setLanguage() failed for '$lang': " . $e->getMessage());
-                    }
-                }
-
-// now this resolves in the correct language
-                $output->name = $chatProcess->getBotName();
-
-                $output->name = $chatProcess->getBotName();
-                bd($output);
-
-            } elseif (isset($responseData['error']['code'])) {
-
-                // Log and return graceful error
-                $this->wire('log')->save('chatai', $responseData['error']['code']);
-                $output->error      = $responseData['error']['code'];
-                $output->chat_error = $responseData['error'];
-                $output->reply      = $this->getErrorMessage(6)->msg; // “Something went wrong”
-                $output->stop       = true;
-
-            } else {
-                // Unexpected shape
-                $this->wire('log')->save('chatai', 'OpenAI: unexpected response');
-                $output->reply = $this->getErrorMessage(6)->msg;
-                $output->error = 'unexpected_response';
-            }
-
-        } else {
-            // No response from API
-            $output->reply = $this->getErrorMessage(11)->msg; // “No response received”
-            $output->error = $output->reply;
-        }
-        return $output;
-    }*/
-
-/*    public function callModelForText($messagesForApi)
-    {
-        $url = 'https://api.openai.com/v1/chat/completions';
-        $http      = new WireHttp();
-        $output = new stdClass();
-
-        $postData = $this->buildPostData($this->model, $messagesForApi);
-        // Ensure your buildPostData includes temperature / max_tokens from module config
-
-        $http->setHeaders([
-            'Authorization' => 'Bearer ' . $this->api_key,
-            'Content-Type'  => 'application/json'
-        ]);
-
-        $response     = $http->send($url, json_encode($postData), 'POST');
-        $responseData = json_decode($response, true);
-
-        // Unexpected shape
-        if (empty($responseData)) {
-            $this->wire('log')->save('chatai', 'OpenAI: unexpected response');
-            $output->reply = $this->getErrorMessage(6)->msg;
-            $output->error = 'unexpected_response';
-            return $output;
-        }
-
-        if (isset($responseData['choices'][0]['message']['content']))
-            return $responseData['choices'][0]['message']['content'];
-
-        if (isset($responseData['error']['code'])) {
-            // Log and return graceful error
-            $this->wire('log')->save('chatai', $responseData['error']['code']);
-
-            $output->error      = $responseData['error']['code'];
-            $output->chat_error = $responseData['error'];
-            $output->reply      = $this->getErrorMessage(6)->msg; // “Something went wrong”
-            $output->stop       = true;
-            return $output;
-        }
-    }*/
-    /**
-     * Always returns:
-     * (object){
-     *    ok: bool,
-     *    text?: string,            // on success
-     *    error?: string,           // short code, e.g. 'unexpected_response', 'rate_limited'
-     *    chat_error?: array        // raw provider error (optional)
-     * }
-     */
-
-
     /**
      * Decide endpoint + normalize body per model family.
      * Returns [string $url, array $body]
@@ -674,6 +467,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $http->setTimeout(25);
 
         try {
+
             $response = $http->send($url, json_encode($body), 'POST');
             if ($response === false) {
                 $this->wire('log')->save('chatai', 'OpenAI transport error: ' . $http->getError());
@@ -822,24 +616,36 @@ class ChatAI extends WireData implements Module, ConfigurableModule
            $started = microtime(true);
 
             // ... after the API call:
+            $messages = $this->beforeSend($messages);
             $m = $this->callModelForText($messages);
-            if (is_array($m)) $m = (object)$m;
+
+            // Normalize to object
+            if (is_string($m)) {
+                $decoded = json_decode($m, false);          // decode as object
+                $m = $decoded ?? (object)[];
+            } elseif (is_array($m)) {
+                $m = (object) $m;
+            } elseif (!is_object($m)) {
+                $m = (object) $m;
+            }
+            $m = $this->afterSend($m);
 
             // common context
-            $ctx = [
+            $meta = [
                 'latency_ms' => (int) round((microtime(true) - $started) * 1000),
-                'count'      => (int)$this->msgCountGetAndInit(),      // or $after post-inc
-                'remaining'  => null,                                  // fill after you compute it
-                'stop'       => false,                                 // fill after you set it
-                'lang_id'    => (int)($langId ?? 0),
-                'model'      => (string)$this->model,
-                'endpoint'   => (stripos($this->model,'gpt-5')===0 ? '/v1/responses' : '/v1/chat/completions'),
-                'user_msg'   => (string)$msg,                          // will be hashed+previewed
+                'count'      => (int) $this->msgCountGetAndInit(),
+                'remaining'  => null,     // fill once computed
+                'stop'       => false,    // fill once set
+                'lang_id'    => (int) ($langId ?? 0),   // use your resolved $langId, not $data['lang']
+                'model'      => (string) $this->model,
+                'endpoint'   => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
+                // for privacy, store only a preview + hash, not full text
+                'user_msg'   => $this->previewAndHash((string) $msg),
             ];
 
             if (!$m->ok) {
-                $ctx['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
-                $this->obsLog($m, $ctx);
+                $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
+                $this->obsLog($m, $meta);
                 // ... your existing error mapping & return
             } else {
                 // ... your existing success handling, then:
@@ -847,10 +653,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $remaining = $this->msgRemaining($after);
                 $result->stop = ($remaining === 0);
 
-                $ctx['remaining']  = $remaining;
-                $ctx['stop']       = (bool)$result->stop;
-                $ctx['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-                $this->obsLog($m, $ctx);
+                $meta['remaining']  = $remaining;
+                $meta['stop']       = (bool)$result->stop;
+                $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
+                $this->obsLog($m, $meta);
             }
 
         } catch (\Throwable $e) {
@@ -862,7 +668,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         if (!$m->ok) {
             $code = !empty($m->error) ? (string)$m->error : 'unknown';
             // log metrics
-            $this->obsLog($m, $ctx);
+            $this->obsLog($m, $meta);
 
             // Normalize provider “too busy / quota / throttled” signals to case 15
             if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
@@ -882,10 +688,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $remaining = $this->msgRemaining($after);
         $result->stop = ($remaining === 0);
 
-        $ctx['remaining']  = $remaining;
-        $ctx['stop']       = (bool)$result->stop;
-        $ctx['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-        $this->obsLog($m, $ctx);
+        $meta['remaining']  = $remaining;
+        $meta['stop']       = (bool)$result->stop;
+        $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
+        $this->obsLog($m, $meta);
 
         $raw = (string) $m->text; // expected HTML fragment per your prompt
 
@@ -905,9 +711,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $raw,
             [ 'HTML.Allowed' => $allowed ]
         );
-
-
-//        $result->html = $this->wire('sanitizer')->purify($raw);
 
         // Plain-text fallback (for screen readers / no-HTML environments)
         $plain = trim(strip_tags($raw));
@@ -943,7 +746,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     }
 
     // Accepts stdClass or array, normalizes, and logs one compact JSON line
-    protected function obsLog($result, array $ctx = []): void {
+    protected function obsLog($result, array $meta = []): void {
         // config + sampling
         $cfg = $this->wire('modules')->get('ProcessChatAI')->_loadPromptSettings();
         if (empty($cfg['obs_enabled'])) return;
@@ -964,7 +767,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         ];
 
         // merge context (latency, counts, model, endpoint, lang, etc.)
-        foreach ($ctx as $k => $v) $out[$k] = $v;
+        foreach ($meta as $k => $v) $out[$k] = $v;
 
         // privacy: hash + preview user_msg if provided
         if (isset($out['user_msg'])) {
@@ -1385,29 +1188,102 @@ SQL;
 
     /* Hookable Methods */
     /** Hook: mutate outbound request before sending to the model. */
-    public function ___beforeSend(array $request): array {
-        return $request; // no-op by default
-    }
+    /** @param array $messages */
+    public function ___beforeSend(array $messages): array { return $messages; }
 
     /** Hook: inspect/mutate raw vendor response before normalisation. */
-    public function ___afterSend(array $rawResponse): array {
+    /** @param array $rawResponse */
+    public function ___afterSend(array|object $rawResponse): array|object {
         return $rawResponse; // no-op by default
     }
 
     /** Hook: optional contextual CTA HTML fragment (or null). */
-    public function ___composeCTA(array $ctx): ?string {
-        return null; // default: no CTA
-    }
+    /** @param array $ctx */
+    public function ___composeCTA(array $ctaCtx): ?string { return null; }
 
     /** Hook: last-mile payload tweak before returning JSON to the widget. */
-    public function ___afterResponse(array $payload): array {
-        return $payload; // no-op by default
-    }
+    /** @param array $payload */
+    public function ___afterResponse(array $payload): array { return $payload; }
 
     /** Helper: sites can override booking page detection via hook. */
     protected function ___isBookingPage(string $url): bool {
         return false;
     }
+
+    /** Hook helper for chatai-api.php */
+/*    public function getCTAExtras(array $params = []): ?\stdClass {
+        $pageUrl = (string)($params['page_url'] ?? '');
+        if ($this->isBookingPage($pageUrl)) return null;
+
+        $ctx = [
+            'intent'        => (string)($params['intent'] ?? 'general'),
+            'pageUrl'       => $pageUrl,
+            'lang_id'       => (int)($params['lang_id'] ?? $params['ln'] ?? 0),
+            'turn'          => (int)($this->wire('session')->getFor('chatai', 'turn') ?? 1),
+            'isBookingPage' => $this->isBookingPage($pageUrl),
+        ];
+
+        if (!$cta = $this->composeCTA($ctx)) return null;
+
+        $o = new \stdClass();
+        $o->cta_html = $this->purify($cta); // your sanitizer wrapper
+        return $o;
+    }*/
+    /**
+     * Decorate an API result once: optional CTA, sanitize, and run afterResponse.
+     * Keeps your sendMessage() contract intact.
+     *
+     * @param object|array $result  The object/array returned by sendMessage()
+     * @param array        $params  ['ln'=>int|null,'page_url'=>string,'intent'=>string]
+     * @return object|array
+     */
+    public function finalizeApiResult(object|array $result, array $params = []): object|array {
+        $wasArray = is_array($result);
+        if ($wasArray) $result = (object)$result;
+
+        $pageUrl = (string)($params['page_url'] ?? '');
+        $langId  = (int)($params['ln'] ?? $params['lang_id'] ?? 0);
+        $intent  = (string)($params['intent'] ?? 'general');
+        $turn    = (int)($this->wire('session')->getFor('chatai', 'turn') ?? 1);
+        $hasError = !empty($result->error);
+
+        // Add CTA only for non-error and outside booking pages
+        if (!$hasError && !$this->isBookingPage($pageUrl)) {
+            $ctx = [
+                'intent'        => $intent,
+                'pageUrl'       => $pageUrl,
+                'lang_id'       => $langId,
+                'turn'          => $turn,
+                'isBookingPage' => $this->isBookingPage($pageUrl),
+            ];
+            if ($cta = $this->composeCTA($ctx)) {
+                if (!isset($result->extras) || !is_object($result->extras)) {
+                    $result->extras = new \stdClass();
+                }
+                $result->extras->cta_html = $this->purify($cta);
+            }
+        }
+
+        // Sanitize main reply if present
+        if (isset($result->reply) && is_string($result->reply)) {
+            $result->reply = $this->purify($result->reply);
+        }
+
+        // Last-mile hook: stay compatible if afterResponse expects array
+        $hookIn  = (array)$result;
+        $hookOut = $this->afterResponse($hookIn); // site can be a no-op
+        $result  = is_array($hookOut) ? (object)$hookOut : $hookOut;
+
+        return $wasArray ? (array)$result : $result;
+    }
+
+    /** Keep markup to your allowed tags; route through your site purifier/sanitizer if available. */
+    protected function purify(string $html): string {
+        $san = $this->wire('sanitizer');
+        return method_exists($san, 'purify') ? $san->purify($html) : $html;
+    }
+
+
 
 
     /* Install, Upgrade, Uninstall */
