@@ -1,5 +1,4 @@
 <?php namespace ProcessWire;
-
 use stdClass;
 
 $chatai = $modules->get('ChatAI');
@@ -11,7 +10,7 @@ if (!$modules->isInstalled('ChatAI')) {
     return;
 }
 
-// optional: light-rate signal
+// optional: light-rate signal only
 $session->setFor('chatai', 'ip', $session->getIP());
 
 $post = trim(file_get_contents('php://input'));
@@ -21,7 +20,7 @@ $data = \json_decode($post, null, 512, 0);
 $userMessage = $sanitizer->text($data->msg ?? '');
 
 if ($userMessage === '') {
-    $res->error = (object)['msg' => $chatai->getErrorMessage(2)];
+    $res->error = $chatai->getErrorMessage(2);
     echo json_encode($res);
     return;
 }

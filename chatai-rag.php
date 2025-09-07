@@ -105,4 +105,4 @@ foreach ($renderQueue as $f) {
 }
 
 // 4) Optional footer: provenance breadcrumbs
- echo "<hr><small>RAG view source: {$page->httpUrl()}</small>";
+echo "<hr><small>RAG view source: {$page->httpUrl()}</small>";

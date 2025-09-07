@@ -47,6 +47,11 @@ class RAG extends Wire {
     public function shouldIndexPage(Page $page, array $cfg): bool {
         $tpls = $this->getConfiguredContextTemplates($cfg);
         if (!$tpls) return false;
+        $config = \ProcessWire\wire('config');
+        // Early-outs (denylist)
+        if ($page->id ===$config->http404PageID) return false;                         // your 404 page (or use config)
+        if (in_array($page->template->name, ['http404'], true)) return false;
+        if (in_array($page->name, ['http404'], true)) return false;
         return in_array($page->template->name, $tpls, true);
     }
 
@@ -57,6 +62,8 @@ class RAG extends Wire {
         $stmt->execute([$pageId]);
         return (bool) $stmt->fetchColumn();
     }
+
+
 
     /**********************
      * 2) LOW-LEVEL TOOLS *

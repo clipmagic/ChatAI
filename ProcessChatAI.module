@@ -26,11 +26,15 @@ use stdClass;
 
 class ProcessChatAI extends Process
 {
+
     public $tabs = [];
 
     public $values = [];
 
     public $formName = 'chat-ai-settings';
+
+    private ?int $lastBitWarned = null;
+
 
     public function __construct()
     {
@@ -42,38 +46,109 @@ class ProcessChatAI extends Process
     {
         $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
 
-        $this->addHookAfter('Pages::saved, Pages::deleted', function($event) {
-            $page = $event->arguments(0);
-            $changes = $event->arguments(1);
-            $cfg = $this->_loadPromptSettings();
-
-            $rag = new RAG();
-            $hasTpl = $rag->shouldIndexPage($page, $cfg);
-
-            // page doesn't match the spec for rag indexing
-            // delete from rag db if it was there previously
-            if(!$hasTpl && $rag->hasVectorsForPage($page->id)) {
-                $rag->deletePageVectors($page);
-                return;
+        $this->addHookAfter('Page::render', function (HookEvent $event) {
+            $inputGet = $this->wire('input')->get;
+            if($inputGet->id || $inputGet->parent_id ) {
+                // only required for page edit/create
+                $this->wire('modules')->get('ChatAI');
             }
-
-            // do not record pages that cannot be viewed by a guest, eg trashed, unpublished, etc
-            // TODO differentiate between Public and logged-in frontend user
-            if(!$page->isPublic()) {
-                $rag->deletePageVectors($page);
-                return;
-             }
-
-            if(empty($changes && $rag->hasVectorsForPage($page->id))) {
-                // don't re-index if already in the vector db
-                return;
-            }
-
-            // page meets all the requirements so add it to vector db
-            try { $rag->collectPageText($page, $cfg); }
-            catch (WireException $e) { $this->wire('log')->save('chatai', 'Index error: '.$e->getMessage()); }
-
         });
+
+
+        // 1) BEFORE WRITE: decide eligibility and set/unset the RAG status bit.
+        //    PW will persist this automatically with the in-flight save.
+        $this->addHookBefore('Pages::saveReady', function ($event) {
+            /** @var \ProcessWire\Page $page */
+            $page = $event->arguments(0);
+            $cfg = $this->_loadPromptSettings();
+            $rag = new RAG();
+
+//            $this->registerRagStatusLabel($page);
+
+
+            // Your eligibility rule:
+            // - keep this exactly how you want (template/parent rules, etc.)
+            // - feel free to swap isPublic() for viewable($guest) later; not required now
+            $eligible = ($rag->shouldIndexPage($page, $cfg));
+            $eligible ? $page->setRagIndexed(true) : $page->setRagIndexed(false);
+        });
+
+        $this->addHookAfter('Pages::saved', function ($event) {
+            /** @var \ProcessWire\Page $page */
+            $page = $event->arguments(0);
+            $changes = (array)($event->arguments(1) ?? []);
+            $rag = new RAG();
+
+//            $this->registerRagStatusLabel($page);
+bd($page->getStatuses());
+bd($page->status(true));
+
+            // 1) Current truth = saved status bit, set earlier in saveReady
+            $eligible = $page->isRagIndexed(); // your addHookMethod helper
+
+            // 2) DB presence
+            $inDb = false;
+            try {
+                $inDb = $rag->hasVectorsForPage((int)$page->id);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai', 'hasVectorsForPage error: ' . $e->getMessage());
+            }
+
+            // 3) Fast path for ineligible
+            if (!$eligible) {
+                if ($inDb) {
+                    try {
+                        $rag->deletePageVectors($page);
+                    } catch (\Throwable $e) {
+                        $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage());
+                    }
+                }
+                return;
+            }
+
+            // 4) Eligible: decide if we need work
+            //    Trust $changes (you said this works best in your install)
+            $changedKeys = array_keys($changes);
+            $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
+            $contentChanged = !empty($meaningfulKeys);
+
+            if (!$inDb) {
+                // First-time indexing
+                try {
+                    $rag->collectPageText($page, $this->_loadPromptSettings());
+                } catch (\Throwable $e) {
+                    $this->wire('log')->save('chatai', 'Index upsert error (first-time): ' . $e->getMessage());
+                }
+                return;
+            }
+
+            if (!$contentChanged) {
+                // Already in DB, and nothing changed → do nothing
+                return;
+            }
+
+            // 5) Replace vectors on real edits
+            try {
+                $rag->deletePageVectors($page);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai', 'Vector delete before reindex error: ' . $e->getMessage());
+            }
+            try {
+                $rag->collectPageText($page, $this->_loadPromptSettings());
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai', 'Index upsert error (reindex): ' . $e->getMessage());
+            }
+        });
+
+
+        // 3) AFTER DELETE: cleanup only (status bit irrelevant once deleted)
+        $this->addHookAfter('Pages::deleted', function($event) {
+            $page = $event->arguments(0);
+            $rag  = new RAG();
+            try { $rag->deletePageVectors($page); }
+            catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
+        });
+
     }
 
 
@@ -110,6 +185,56 @@ class ProcessChatAI extends Process
         $event->removeHook($this);
     }
 
+    // ---- RAG status bit helpers (fast in/out marker) ----
+    /** Return configured single-bit (power-of-two), fallback to 1<<22 */
+
+    /**
+     * Add our friendly RAG status label to this Page instance’s status map.
+     * - No DB calls, no save(), no global registration.
+     * - Purely for nicer labels in Tracy and the Settings → Status panel.
+     */
+
+    protected function ragStatusBit(): int {
+        $cfg = $this->_loadPromptSettings();
+        $bit = (int)($cfg['rag_status_bit'] ?? (1 << 22));
+        // enforce single-bit safety: if not a power of two, fall back
+        if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22);
+        return $bit;
+    }
+    private function registerRagStatusLabel(\ProcessWire\Page $page): void {
+        // Resolve configured single-bit (power-of-two), with safety fallback
+//        $bit = $this->ragStatusBit(); // your existing helper
+
+        $rag = new RAG();
+        $bit = $rag->rag_status_bit; // your existing helper
+
+        // Start from the page’s current status map, or fall back to core map
+ //       $map = (array) $page->get('status');
+        $map = (array) $page->status(true);
+        if (!$map) {
+            $map = \ProcessWire\Page::getStatuses(); // name => int
+        }
+
+        // Inject/overwrite our label for the bit (local to this $page)
+        $map['rag_indexed'] = $bit; // or $this->_('rag_indexed') if you want i18n label keys elsewhere
+
+        // Set it back on the Page instance (runtime only)
+        $page->set('status', $map);
+    }
+
+    /** Flip bit on the page (DO NOT save() here) */
+    protected function markIndexed(\ProcessWire\Page $page): void {
+        $bit = $page->ragStatusBit();
+        if (!$page->hasStatus($bit)) $page->addStatus($bit);
+    }
+    protected function unmarkIndexed(\ProcessWire\Page $page): void {
+        $bit = $page->ragStatusBit();
+        if ($page->hasStatus($bit)) $page->removeStatus($bit);
+    }
+    protected function isMarkedIndexed(\ProcessWire\Page $page): bool {
+        return $page->hasStatus($page->ragStatusBit());
+//        return $page->hasStatus(self::statusRag);
+    }
 
     // Tab builders (lazy-loaded or simple new)
     protected function tabs(array $tab): array
@@ -164,6 +289,19 @@ class ProcessChatAI extends Process
             $key = array_key_first($out);
             $tabView[$key] = $out[$key];
             $form = $out['form'];
+        }
+        // Handle "Run Backfill & Reconcile"
+        if ($this->wire('input')->post('chatai_run_backfill')) {
+            $dry = (bool) $this->input->post('chatai_backfill_dry_run');
+            $chunk = (int) ($this->input->post('chatai_backfill_chunk') ?: 200);
+            if ($chunk < 50)  $chunk = 50;
+            if ($chunk > 1000) $chunk = 1000;
+
+            $t0 = microtime(true);
+            $summary = $this->runBackfillReconcile($dry, $chunk);
+            $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
+
+            $this->message($this->_('Backfill & Reconcile complete.') . ' ' . json_encode($summary));
         }
 
 
@@ -263,8 +401,9 @@ class ProcessChatAI extends Process
         }
     }
 
-    private function _loadPromptSettings(): array {
-        $chatai = $this->modules->get('ChatAI');
+    public function _loadPromptSettings(): array {
+
+        $chatai = $this->wire('modules')->get('ChatAI');
         $db = wire('database');
         $table = $chatai::dbTablePrompt;
 
@@ -272,9 +411,11 @@ class ProcessChatAI extends Process
         $stmt->execute();
         $row = $stmt->fetch(\PDO::FETCH_ASSOC);
         if(!$row || !isset($row['json'])) return [];
-
-        $data = json_decode($row['json'], true);
-        return is_array($data) ? $data : [];
+        $data = json_decode($row['json'], true) ?: [];
+        $bit  = (int)($chatai->rag_status_bit ?? 0);
+        if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22); // fallback
+        $data['rag_status_bit'] = $bit;
+        return $data;
     }
 
     protected function buildPrompt(): string {
@@ -319,6 +460,20 @@ class ProcessChatAI extends Process
         $langName = isset($langs[$langCode]) ? $langs[$langCode] : 'English';
 
         $counter = 1;
+
+        $allowed = trim((string)($this['values']['allowed_tags'] ?? 'p,ul,li,ol,strong,em,code,br,a[href],blockquote'));
+        $allowedClean = array_values(array_filter(array_map('trim', explode(',', $allowed))));
+
+        /** Build literal tags for the PROMPT (not HTML-escaped) */
+        $allowedForPrompt = implode(', ', array_map(function($t) {
+            // turn "a[href]" into <a href="">
+            if (stripos($t, 'a[') === 0) return '<a href="">';
+            // plain tag names (p, ul, li, …) → <p>, <ul>, …
+            return '<' . $t . '>';
+        }, $allowedClean));
+
+
+
         $prompt = '';
         // Assemble your safe default system prompt
         if(!empty($botname)) {
@@ -349,10 +504,10 @@ class ProcessChatAI extends Process
         // 3. Output formatting
         $counter++;
         $prompt .= "\n{$counter}. **Output Formatting (HTML only)**";
-        $prompt .= "\n- Use only these tags: `<p>`, `<ul>`, `<li>`, `<ol>`, `<strong>`, `<em>`, `<code>`, `<br>`, `<a>`.";
+        $prompt .= "\n- Use only these tags: {$allowedForPrompt}.";
         $prompt .= "\n- Output HTML fragments only. Do not include `<html>`, `<head>`, or `<body>`.";
         $prompt .= "\n- Do not include inline CSS, scripts, images, or tables.";
-        $prompt .= "\n- Use `<p>` for paragraphs, `<ul>` or `<ol>` for lists, and `<br>` for simple line breaks.";
+        $prompt .= "\n- Use `<p>` for paragraphs, lists with `<ul>/<ol>`, and `<br>` for simple line breaks.";
         $prompt .= "\n- Escape any user-supplied HTML unless specific formatting is requested. Treat input as plain text by default.";
         $prompt .= "\n- Create links with `<a href='...'>` using only absolute URLs and no other attributes.\n";
 
@@ -360,7 +515,7 @@ class ProcessChatAI extends Process
         $counter++;
         $prompt .= "\n{$counter}. **Safety & Civility**";
         $prompt .= "\n- Do not echo rude or obscene language. Respond politely and guide the conversation toward respect.";
-        $prompt .= "\n- Decline any harmful or illegal requests succinctly and suggest safer alternatives.\n";
+        $prompt .= "\n- Decline any harmful or illegal requests succinctly and suggest safer alternatives.";
         $prompt .= "\n- Always acknowledge greetings and ask for what the user would like to know.\n";
 
         // Brevity
@@ -467,5 +622,113 @@ class ProcessChatAI extends Process
         return $blacklisted;
     }
 
+
+    // Dashboard features
+    /** Compact, single source of truth for eligibility (same as your saveReady logic) */
+    protected function isEligibleForRag(\ProcessWire\Page $page, array $cfg): bool {
+        $rag = new RAG();
+        if (!$rag->shouldIndexPage($page, $cfg)) return false;
+        return (bool) $page->isPublic(); // (You can swap to viewable($guest) later)
+    }
+
+    /** Path to our backfill log */
+    protected function backfillLogPath(): string {
+        $config = $this->wire('config');
+        $dir = $config->paths->logs . 'chatai';
+        if (!is_dir($dir)) @mkdir($dir, $config->chmodDir, true);
+        return $dir . '/chatai_backfill.txt';
+    }
+
+    /** Append a JSON line to the backfill log */
+    protected function backfillLog(array $row): void {
+        $row['t'] = date('c');
+        $logPath = $this->backfillLogPath();
+        @file_put_contents($logPath, json_encode($row) . PHP_EOL, FILE_APPEND);
+    }
+
+
+    /**
+     * Run Backfill & Reconcile across the site.
+     * - $dryRun: don't write vectors, only report
+     * - $chunk: batch size for memory/time safety
+     * Returns a summary array with counts.
+     */
+    protected function runBackfillReconcile(bool $dryRun = false, int $chunk = 200): array {
+        $pages = $this->wire('pages');
+        $cfg   = $this->_loadPromptSettings();
+        $rag   = new RAG();
+        $config = $this->wire('config');
+
+        $bit   = $this->ragStatusBit();
+        $guest = $this->wire('users')->getGuestUser();
+        $http404 = $config->http404PageID;
+
+        $summary = [
+            'eligible_total' => 0,
+            'ineligible_total' => 0,
+            'indexed_new' => 0,
+            'indexed_replaced' => 0,
+            'deleted' => 0,
+            'skipped_ok' => 0,
+            'errors' => 0,
+            'dry_run' => $dryRun,
+            'chunk' => $chunk,
+            'model' => $this->model ?? '',
+        ];
+
+        // Broad candidate scan — you may narrow by templates/parents in RAG::shouldIndexPage
+        $selector = "has_parent!=2, status!=trash, id!=$http404, template!=http404, include=hidden";
+        $total = $pages->count($selector);
+        $offset = 0;
+
+        while ($offset < $total) {
+            foreach ($pages->find("$selector, start=$offset, limit=$chunk") as $page) {
+                try {
+                    // Decide eligibility (same as saveReady)
+                    $eligible = $this->isEligibleForRag($page, $cfg);
+                    $marked   = $page->hasStatus($bit);
+                    $inDb     = $rag->hasVectorsForPage((int)$page->id);
+
+                    if ($eligible) $summary['eligible_total']++; else $summary['ineligible_total']++;
+
+                    // Reconcile status bit to reflect eligibility (in memory only — no save())
+                    if ($eligible && !$marked) $page->addStatus($bit);
+                    if (!$eligible && $marked) $page->removeStatus($bit);
+
+                    if (!$eligible) {
+                        if ($inDb) {
+                            if (!$dryRun) $rag->deletePageVectors($page);
+                            $summary['deleted']++;
+                            $this->backfillLog(['ev'=>'delete', 'id'=>$page->id, 'url'=>$page->url]);
+                        } else {
+                            $summary['skipped_ok']++;
+                        }
+                        if($page->id === $config->http404PageID) {
+                            $this->backfillLog(['ev'=>'warn_excluded', 'id'=>$page->id, 'reason'=>'id denylist']);
+                        }
+                        continue;
+                    }
+
+                    // Eligible
+                    if (!$inDb) {
+                        if (!$dryRun) $rag->collectPageText($page, $cfg);
+                        $summary['indexed_new']++;
+                        $this->backfillLog(['ev'=>'index_new', 'id'=>$page->id, 'url'=>$page->url]);
+                        continue;
+                    }
+
+                    // Already in DB → no content check here (bulk reconcile). Keep it light.
+                    $summary['skipped_ok']++;
+                } catch (\Throwable $e) {
+                    $summary['errors']++;
+                    $this->backfillLog(['ev'=>'error', 'id'=>$page->id ?? 0, 'msg'=>$e->getMessage()]);
+                }
+            }
+            $offset += $chunk;
+        }
+
+        $this->backfillLog(['ev'=>'summary'] + $summary);
+        return $summary;
+    }
 
 }

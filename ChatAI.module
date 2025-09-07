@@ -15,6 +15,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     const modName = 'ChatAI';
 
+    const statusRag = 4194304;
+
+
+
     public function construct()
     {
         parent::__construct();
@@ -22,6 +26,61 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function init()
     {
+        $this->addHookMethod('Page::ragStatusBit', function (\ProcessWire\HookEvent $e) {
+            $chatai = $this->wire('modules')->get('ChatAI');
+            $bit = (int)($chatai->rag_status_bit ?? (1 << 22));
+            if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22);
+            $e->return = $bit;
+//                    bd($this->rag_status_bit);
+//                    $e->return = $this->rag_status_bit;
+           });
+
+    $this->addHookMethod('Page::isRagIndexed', function (\ProcessWire\HookEvent $e) {
+        /** @var \ProcessWire\Page $page */
+        $page = $e->object;
+        //   $e->return = $page->hasStatus($page->ragStatusBit());
+        $e->return = $page->hasStatus($this->rag_status_bit);
+    });
+
+    $this->addHookMethod('Page::setRagIndexed', function (\ProcessWire\HookEvent $e) {
+        /** @var \ProcessWire\Page $page */
+        $page = $e->object;
+        $on = (bool)($e->arguments(0) ?? true);
+        // $bit = $page->ragStatusBit();
+        $bit = $this->rag_status_bit;
+        if ($on) {
+            if (!$page->hasStatus($bit)) $page->addStatus($bit);
+        } else {
+            if ($page->hasStatus($bit)) $page->removeStatus($bit);
+        }
+
+        // no save() here; let the caller’s save persist it
+        $e->return = $page;
+    });
+
+    $this->addHookMethod('Page::ragStatusName', function (\ProcessWire\HookEvent $e) {
+        /** @var \ProcessWire\Page $page */
+        $page = $e->object;
+        //  $e->return = $page->hasStatus($page->ragStatusBit()) ? 'rag_indexed' : '';
+        $e->return = $page->hasStatus($this->rag_status_bit) ? 'rag_indexed' : '';
+    });
+
+    $this->addHookMethod('Page::ragStatusArray', function (\ProcessWire\HookEvent $e) {
+        /** @var \ProcessWire\Page $page */
+        $page = $e->object;
+        $out = $page->status(true); // array of known names
+        //        $bit = $page->ragStatusBit();
+        $bit = $this->rag_status_bit;
+        // If PW doesn’t label our bit, add a friendly entry
+        if ($page->hasStatus($bit)) {
+            $out[$bit] = 'rag_indexed';
+            // Remove any “unknown-<mask>” residue if present
+            foreach ($out as $k => $v) {
+                if (is_string($v) && str_starts_with($v, 'unknown-')) unset($out[$k]);
+            }
+        }
+        $e->return = $out;
+    });
 
     }
 
@@ -141,12 +200,49 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
         $value = $data['prompt_roles'] ?? '';
         $f->attr('value', $value);
+        $f->columnWidth = 50;
         $note = $this->_("Superuser enabled by default.\r\nYou may optionally add a ChatAI specific role with page-edit permission.");
         $f->notes($note);
+        $inputfields->add($f);
+
+        // RAG Status Marker (Dashboard/Options tab)
+        $f = $modules->get('InputfieldInteger');
+        $f->attr('name+id','rag_status_bit' );
+        $f->label = $this->_('Custom Page Status bit (power of two)');
+        $f->description = $this->_('Used to mark pages that are indexed into RAG. Choose a high, unused bit.');
+        $val = (int)($data['rag_status_bit'] ?? (1 << 22)); // default 4194304
+        $f->attr('value', $val);
+        $f->set('min',1);
+        $f->columnWidth = 50;
+
+        $shift = $val > 0 ? (int)round(log($val, 2)) : 0;
+        $f->notes($this->_(
+            "Tip: choose a high power-of-two bit.\n" .
+            "The module only toggles this bit and will not touch core flags.\n" .
+            "Current: {$val} (0x" . strtoupper(dechex($val)) . ", 1<<{$shift})" .
+            "Default:  4194304"
+        ));
 
         $inputfields->add($f);
 
-//        // File locations
+        // After creating $f (the InputfieldInteger)
+        $f->addHookAfter('processInput', function($event) {
+            /** @var \ProcessWire\InputfieldInteger $field */
+            $field = $event->object;
+            $val   = (int) $field->value;
+            if ($val <= 0 || ($val & ($val - 1)) !== 0) {
+                $field->error(
+                    __("Must be a single bit (power of two): 1, 2, 4, 8, 16, ... Default: 4194304")
+                );
+            }
+        });
+
+
+
+
+
+
+        // File locations
         $fieldset = $modules->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'files');
         $fieldset->label($this->_('Files'));
@@ -532,6 +628,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             if (isset($payload['temperature']))           $body['temperature']       = (float)$payload['temperature'];
             if (!empty($payload['reasoning_effort']))     $body['reasoning']         = ['effort' => (string)$payload['reasoning_effort']];
             // drop verbosity (not public)
+
             return [$endpoint, $body];
         }
 
@@ -584,6 +681,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 return $o;
             }
             $data = json_decode($response, true);
+            $this->obsLog($data);
 
             // If using /responses, prefer new shapes first
             if (strpos($url, '/responses') !== false) {
@@ -721,9 +819,39 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // Model call
         try {
-            $m = $this->callModelForText($messages); // always object {ok,text?,error?}
-            // Guard against wrong type sneaking in
+           $started = microtime(true);
+
+            // ... after the API call:
+            $m = $this->callModelForText($messages);
             if (is_array($m)) $m = (object)$m;
+
+            // common context
+            $ctx = [
+                'latency_ms' => (int) round((microtime(true) - $started) * 1000),
+                'count'      => (int)$this->msgCountGetAndInit(),      // or $after post-inc
+                'remaining'  => null,                                  // fill after you compute it
+                'stop'       => false,                                 // fill after you set it
+                'lang_id'    => (int)($langId ?? 0),
+                'model'      => (string)$this->model,
+                'endpoint'   => (stripos($this->model,'gpt-5')===0 ? '/v1/responses' : '/v1/chat/completions'),
+                'user_msg'   => (string)$msg,                          // will be hashed+previewed
+            ];
+
+            if (!$m->ok) {
+                $ctx['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
+                $this->obsLog($m, $ctx);
+                // ... your existing error mapping & return
+            } else {
+                // ... your existing success handling, then:
+                $after     = $this->msgCountInc();
+                $remaining = $this->msgRemaining($after);
+                $result->stop = ($remaining === 0);
+
+                $ctx['remaining']  = $remaining;
+                $ctx['stop']       = (bool)$result->stop;
+                $ctx['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
+                $this->obsLog($m, $ctx);
+            }
 
         } catch (\Throwable $e) {
             $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
@@ -733,6 +861,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Interpret
         if (!$m->ok) {
             $code = !empty($m->error) ? (string)$m->error : 'unknown';
+            // log metrics
+            $this->obsLog($m, $ctx);
 
             // Normalize provider “too busy / quota / throttled” signals to case 15
             if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
@@ -748,11 +878,36 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         // Model returned success in $m->text
+        $after     = $this->msgCountInc();
+        $remaining = $this->msgRemaining($after);
+        $result->stop = ($remaining === 0);
+
+        $ctx['remaining']  = $remaining;
+        $ctx['stop']       = (bool)$result->stop;
+        $ctx['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
+        $this->obsLog($m, $ctx);
 
         $raw = (string) $m->text; // expected HTML fragment per your prompt
 
         // HTML lane — sanitize allowed tags server-side
-        $result->html = $this->wire('sanitizer')->purify($raw);
+        // Build Purifier allowlist from config (HTML Purifier syntax)
+        $allowed = trim((string)($this['values']['allowed_tags'] ?? 'p,ul,li,ol,strong,em,code,br,a[href]'));
+
+        // Ensure anchor allows href if 'a' present without attribute
+        if (preg_match('/(^|,)\\s*a(\\s*,|$)/i', $allowed)) {
+            $allowed = preg_replace('/(^|,)\\s*a(\\s*,|$)/i', '$1a[href]$2', $allowed);
+        }
+
+        // Normalize spaces
+        $allowed = implode(',', array_filter(array_map('trim', explode(',', $allowed))));
+
+        $result->html = $this->wire('sanitizer')->purify(
+            $raw,
+            [ 'HTML.Allowed' => $allowed ]
+        );
+
+
+//        $result->html = $this->wire('sanitizer')->purify($raw);
 
         // Plain-text fallback (for screen readers / no-HTML environments)
         $plain = trim(strip_tags($raw));
@@ -786,6 +941,58 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     protected function msgRemaining(int $after): int {
         return max(0, ((int)$this->max_messages) - $after);
     }
+
+    // Accepts stdClass or array, normalizes, and logs one compact JSON line
+    protected function obsLog($result, array $ctx = []): void {
+        // config + sampling
+        $cfg = $this->wire('modules')->get('ProcessChatAI')->_loadPromptSettings();
+        if (empty($cfg['obs_enabled'])) return;
+        $sr = max(1, (int)($cfg['obs_sample_rate'] ?? 1));
+        if (mt_rand(1, $sr) !== 1) return;
+
+        // normalize result to array
+        if (is_object($result)) $result = json_decode(json_encode($result), true);
+        $result = is_array($result) ? $result : [];
+
+        // build payload (prefer your stdClass shape: ok/text/error)
+        $out = [
+            't'          => date('c'),
+            'event'      => 'reply',
+            'ok'         => (bool)($result['ok'] ?? false),
+            'err_code'   => $result['error'] ?? null,
+            'answer_len' => isset($result['text']) ? strlen((string)$result['text']) : null,
+        ];
+
+        // merge context (latency, counts, model, endpoint, lang, etc.)
+        foreach ($ctx as $k => $v) $out[$k] = $v;
+
+        // privacy: hash + preview user_msg if provided
+        if (isset($out['user_msg'])) {
+            $u = (string)$out['user_msg'];
+            $out['user_msg_preview'] = mb_substr($u, 0, 120);
+            $out['user_msg_hash']    = hash('sha256', $u);
+            unset($out['user_msg']);
+        }
+
+        // Write to /site/assets/logs/chatai/chatai_metrics.txt
+        $config = $this->wire('config');
+        $files  = $this->wire('files');
+
+        $dir  = $config->paths->logs . 'chatai/';
+        $file = $dir . 'chatai_metrics.txt';
+
+        if (!is_dir($dir)) {
+            // ensures correct perms (uses $config->chmodDir)
+            $files->mkdir($dir, true);
+        }
+
+        // lightweight rotation (optional)
+        if (is_file($file) && filesize($file) > 5 * 1024 * 1024) { // 5 MB
+            @rename($file, $file . '.' . date('Ymd-His'));
+        }
+        file_put_contents($file, json_encode($out, JSON_UNESCAPED_SLASHES) . PHP_EOL, FILE_APPEND | LOCK_EX);
+    }
+
 
     public function saveToTranscript(string $role, string $content): void {
         $san = $this->wire('sanitizer');

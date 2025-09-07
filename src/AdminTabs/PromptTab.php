@@ -96,16 +96,16 @@ class PromptTab
         $fieldset->label($m->_('Content guidance'));
         $fieldset->showIf('autogen=1');
 
-        // Search fields
-        $f = $m->get('InputfieldText');
-        $f->attr('name+id', 'context_fields');
-        $f->label($m->_('Search fields'));
-        $f->notes("Content fields to search in ProcessWire Selector format.\n'title|headline|' automatically prepended to the selector");
-        $value = $data['context_fields'] ?? 'summary|body';
-        $f->attr('value', $value);
-        $f->stripTags = true;
-        $f->columnWidth(30);
-        $fieldset->add($f);
+//        // Search fields
+//        $f = $m->get('InputfieldText');
+//        $f->attr('name+id', 'context_fields');
+//        $f->label($m->_('Search fields'));
+//        $f->notes("Content fields to search in ProcessWire Selector format.\n'title|headline|' automatically prepended to the selector");
+//        $value = $data['context_fields'] ?? 'summary|body';
+//        $f->attr('value', $value);
+//        $f->stripTags = true;
+//        $f->columnWidth(30);
+//        $fieldset->add($f);
 
         // Search templates
         $f = $m->get('InputfieldText');
@@ -117,6 +117,18 @@ class PromptTab
         $f->stripTags = true;
         $f->columnWidth(30);
         $fieldset->add($f);
+
+        // Allowed HTML tags
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'allowed_tags');
+        $f->label($m->_("Allowed HTML tags"));
+        $value = $data['allowed_tags'] ?? 'p,ul,li,ol,strong,em,code,br,a[href]';
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->columnWidth(30);
+        $f->notes = $m->_("Comma separated list of HTML tags allowed in the Chatbot reply, eg: p,ul,li,ol,strong,em,code,br,a[href]");
+        $fieldset->add($f);
+
 
         // Max number of page links
         $f = $m->get('InputfieldInteger');
