@@ -1,0 +1,25 @@
+{
+    "name": "jenstornell/tiny-html-minifier",
+    "description": "Minify HTML in PHP with just a single class",
+    "keywords": [
+        "minifier",
+        "minify",
+        "html"
+    ],
+    "version": "2.2",
+    "type": "library",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Jens Törnell",
+            "email": "webblayout@gmail.com"
+        }
+    ],
+    "require": {},
+    "require-dev": {},
+    "autoload": {
+        "psr-4": {
+            "Minifier\\": "src/"
+        }
+    }
+}

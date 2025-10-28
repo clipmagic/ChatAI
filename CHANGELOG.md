@@ -10,3 +10,9 @@
 - Add RAG class
 - Add vector db
 - Add the ability to add/remove pages from the vector Db
+
+##0.0.3Alpha
+- Add Dictionary Tab
+- Add create dict
+- Update prompt Settings
+

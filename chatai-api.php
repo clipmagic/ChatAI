@@ -1,55 +1,39 @@
 <?php namespace ProcessWire;
-
 use stdClass;
 
-$result = new stdClass;
+$respond = function($data) {
+    header('Content-Type: application/json; charset=utf-8');
+    echo json_encode($data, JSON_UNESCAPED_UNICODE);
+    exit; // stop any further output
+};
+
 $chatai = $modules->get('ChatAI');
-if(!$modules->isInstalled("ChatAI")){
-    $result->error = "ChatAI is not installed.";
-    return json_encode($result);
+$res = new stdClass();
+
+if(!$modules->isInstalled('ChatAI')) {
+    $res->error = (object)['msg' => 'ChatAI is not installed.'];
+    return $respond($res);   // your habitual "return", helper does the echo+exit
 }
 
-$result->reply = '';
-
-// Unsure if this is needed but so what?
-$ip = $session->getIP();
-$session->setFor('chatai', 'ip', $ip);
+$session->setFor('chatai', 'ip', $session->getIP());
 
 $post = trim(file_get_contents('php://input'));
-if(!$session->getFor('chatai', 'count')) {
-    // First message submitted
-    $session->setFor('chatai', 'count', 1);
+if(!$post) return $respond($res);
+
+$data = json_decode($post);
+$userMessage = $sanitizer->text($data->msg ?? '');
+if($userMessage === '') {
+    $res->error = $chatai->getErrorMessage(2);
+    return $respond($res);
 }
 
-// Check the message count
-$count = $session->getFor('chatai', 'count');
-$result->count = $count;
+$res = $chatai->sendMessage($userMessage, $data->ln ?? null);
 
-if($count > $chatai->max_messages) {
-    $result->stop = true;
-    $result->error = $chatai->getErrorMessage(4);
-    return json_encode($result);
-}
+/* Optional decoration kept in the module */
+$res = $chatai->finalizeApiResult($res, [
+    'ln'       => $data->ln ?? null,
+    'page_url' => $data->page_url ?? '',
+    'intent'   => $data->intent ?? 'general',
+]);
 
-if (!empty($post) && empty($result->error)) {
-    $data = \json_decode($post, null, 512, 0);
-
-    // clean the submitted question
-    $userMessage = $sanitizer->text($data->msg ?? '');
-
-    if ($userMessage === '') {
-        // blank user message submitted
-        $result->error = $chatai->getErrorMessage(2);
-    }
-
-    $result = $chatai->sendMessage($userMessage, $data->ln);
-
-    if(empty($result->blacklisted) && !empty($result->reply) ) {
-        $botanswer = $sanitizer->unentities($result->reply);
-        $answer = !empty($result->html) ? $sanitizer->text($result->html) . $botanswer : $botanswer;
-        $result->reply = new stdClass;
-        $result->reply->msg = $answer;
-    }
-
-    return json_encode($result);
-}
+return $respond($res);

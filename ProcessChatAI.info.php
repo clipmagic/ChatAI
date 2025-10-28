@@ -15,7 +15,7 @@
 
 $info = [
     'title' => 'AI Chatbot for ProcessWire',
-    'version' => "0.0.1Beta",
+    'version' => "0.0.3Alpha",
     'summary' => 'Manages ChatAI chats in admin',
     'autoload' => 'admin',
     'singular' => true,
