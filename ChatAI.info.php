@@ -15,7 +15,7 @@
 
 $info = [
     'title' => 'AI Chatbot for ProcessWire',
-    'version' => "0.0.1Alpha",
+    'version' => "0.0.3Alpha",
     'author' => 'Clip magic',
     'summary' => 'Embeds a configurable AI chatbot powered by OpenAI on your site.',
     'autoload' => 'admin',

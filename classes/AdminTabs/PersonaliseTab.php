@@ -23,7 +23,7 @@ class PersonaliseTab
     public function build($form, $data): array
     {
 
-        $m = \ProcessWire\Wire('modules');
+        $m = \ProcessWire\wire('modules');
         $user = \ProcessWire\wire('user');
         $userLang = $user->language;
 
@@ -48,7 +48,6 @@ class PersonaliseTab
         $f->attr('value', $value);
         $f->stripTags = true;
         $fieldset->add($f);
-
 
         // Intro
         $f = $m->get('InputfieldText');
@@ -137,7 +136,6 @@ class PersonaliseTab
         $f->attr('name', 'smalltalk_reply');
         $f->label($m->_('Small-talk reply'));
         $f->useLanguages = true;
-//        $f = $this->formRenderHelper($f, 'Hello. How can I help?', $languages, $this['values']);
         $f->attr('value', 'Hello. How can I help?');
         $fieldset->add($f);
 
@@ -147,7 +145,6 @@ class PersonaliseTab
         $f->label($m->_('No-context reply'));
         $f->useLanguages = true;
         $f->attr('value', 'I can help with pages and information on this site. Tell me what you are looking for and I will point you to the right page.');
-//        $f = $this->formRenderHelper($f, 'I can help with pages and information on this site. Tell me what you are looking for and I will point you to the right page.', $languages, $this['values']);
         $fieldset->add($f);
 
         // Small-talk triggers (one per line)
@@ -155,7 +152,6 @@ class PersonaliseTab
         $f->attr('name', 'smalltalk_triggers');
         $f->label($m->_('Small-talk triggers (one per line)'));
         $f->useLanguages = true;
-//        $f = $this->formRenderHelper($f, "hi\nhello\nhey\nok\nthanks\nbonjour\nsalut", $languages, $this['values']);
         $f->attr('value', "hi\nhello\nhey\nok\nthanks\nbonjour\nsalut");
         $fieldset->add($f);
         $inputfields->add($fieldset);

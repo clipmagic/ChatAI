@@ -33,6 +33,16 @@ class DashboardTab
         $inputfields->addClass('WireTab');
         $inputfields->attr('id', $sanitizer->fieldName($tabName) );
 
+        $f = $m->get('InputfieldCheckbox');
+        $f->attr('name+id', 'chunk_on_save');;
+        $f->label = $m->_('Update ChatAI on Save');
+        $f->value = (int)($data['chunk_on_save'] ?? 1);
+        $f->autocheck = 1;
+//        $f->checkedValue = 'Yes';
+//        $f->uncheckedValue = 'No';
+        $f->notes = $m->_("When 'On', each page will be updated on save.\nRecommend setting to 'Off' when bulk updating pages, then using the Backfill & Reconcile later.");
+        $inputfields->add($f);
+
         // TODO add dashboard components
         $content = "<p>Dashboard components here</p>";
 
@@ -40,6 +50,8 @@ class DashboardTab
         $markUp->attr('value', $content);
 
         $inputfields->add($markUp);
+
+
 
         // --- Metrics Preview (read-only) ---
         $preview = $m->get('InputfieldMarkup');
@@ -112,6 +124,8 @@ class DashboardTab
         $dry->name = 'chatai_backfill_dry_run';
         $dry->label = $m->_('Dry run (report only, no changes)');
         $dry->checked = true;
+        $dry->columnWidth(50);
+
         $bf->add($dry);
 
         $chunk = $m->get('InputfieldInteger');
@@ -120,6 +134,8 @@ class DashboardTab
         $chunk->value = 200;
         $chunk->min = 50;
         $chunk->max = 1000;
+        $chunk->columnWidth(50);
+
         $bf->add($chunk);
 
         $btn = $m->get('InputfieldSubmit');
@@ -129,18 +145,6 @@ class DashboardTab
         $bf->add($btn);
 
         $inputfields->add($bf);
-
-
-
-        $chip = $m->get('InputfieldMarkup');
-        $bit  = $m->wire('modules')->get('ChatAI')->rag_status_bit ?: (1<<22);
-        $shift = (int)round(log($bit,2));
-        $chip->label = $m->_('RAG Status Bit');
-        $chip->value = "<code>{$bit}</code> (0x" . strtoupper(dechex($bit)) . ", 1&laquo;{$shift})";
-        $chip->notes = $m->_('Used to mark pages currently indexed in RAG.');
-        $chip->collapsed = \ProcessWire\Inputfield::collapsedYes;
-        $inputfields->add($chip);
-
 
         $form->add($inputfields);
 
@@ -152,4 +156,6 @@ class DashboardTab
 
         return $output;
     }
+
+
 }

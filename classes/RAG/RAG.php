@@ -26,41 +26,52 @@ class RAG extends Wire {
 
     public function __construct() { parent::__construct(); }
 
+    public function init() {
+        require_once '../../classes/Indexing/IndexContentExtractor.php';
+        require_once '../../classes/Indexing/ChatAIIndexer.php';
+
+        // Shared services
+        $this->indexer = new \ProcessWire\ChatAIIndexer();
+        $this->indexer->setWire($this->wire());
+
+    }
+
     /*************************
      * 1) CONFIG HELPERS     *
      *************************/
 
-    /**
-     * Return list of template names eligible for indexing (KISS: supports array or pipe string).
-     * Examples:
-     *   - 'basic-page|product' => ['basic-page','product']
-     *   - ['basic-page','product'] stays as-is
-     */
-    protected function getConfiguredContextTemplates(array $cfg): array {
-        $tpls = $cfg['context_templates'] ?? [];
-        if (is_string($tpls)) $tpls = explode('|', $tpls);
-        $tpls = array_values(array_unique(array_filter(array_map('trim', $tpls))));
-        return $tpls;
-    }
-
     /** Page must use a configured template to be indexed. */
     public function shouldIndexPage(Page $page, array $cfg): bool {
-        $tpls = $this->getConfiguredContextTemplates($cfg);
-        if (!$tpls) return false;
-        $config = \ProcessWire\wire('config');
-        // Early-outs (denylist)
-        if ($page->id ===$config->http404PageID) return false;                         // your 404 page (or use config)
+
+        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $config = $this->wire('config');
+
+        $cfg = $chatProcess->loadPromptSettings();
+
+        if(!$chatai->validTemplate($page, $cfg)) return false;
+        if ($page->id === $config->http404PageID) return false;                         // your 404 page (or use config)
         if (in_array($page->template->name, ['http404'], true)) return false;
         if (in_array($page->name, ['http404'], true)) return false;
-        return in_array($page->template->name, $tpls, true);
+
+        return true;
     }
 
-    /** Quick probe: does any vector exist for this page? */
-    public function hasVectorsForPage(int $pageId): bool {
-        $db = $this->wire('database');
-        $stmt = $db->prepare("SELECT 1 FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? LIMIT 1");
-        $stmt->execute([$pageId]);
-        return (bool) $stmt->fetchColumn();
+    /**
+     * Reindex decision:
+     * - returns true if page has no vectors OR the latest vector is older than $page->modified
+     * - returns false if vectors exist and are up-to-date
+     */
+    public function shouldReindex(Page $page): bool
+    {
+        $db  = $this->wire('database');
+        $tbl = $db->escapeTable(self::CHATAI_VEC_TABLE);
+
+        $stmt = $db->prepare("SELECT MAX(updated_at) AS m FROM {$tbl} WHERE page_id = ?");
+        $stmt->execute([(int)$page->id]);
+        $max = $stmt->fetchColumn(); // null if no rows
+
+        return !$max || strtotime($max) < (int)$page->modified;
     }
 
 
@@ -195,13 +206,14 @@ class RAG extends Wire {
     }
 
     /** Insert per-chunk rows for one language. */
-    protected function indexPageTextChunks(Page $page, int $langId, string $text): void {
+    protected function indexPageTextChunks(Page $page, int $langId, array $content): void {
+
         $db = $this->wire('database');
         // replace rows for (page, lang)
         $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE page_id=? AND lang_id=?")
             ->execute([$page->id, $langId]);
 
-        $text = trim($text);
+        $text = trim($content['text']);
         if ($text === '') return;
 
         $chunks = $this->chunkTextByChars($text);
@@ -210,49 +222,61 @@ class RAG extends Wire {
         $now = date('Y-m-d H:i:s');
         $stmtIns = $db->prepare(
             "INSERT INTO `" . self::CHATAI_VEC_TABLE . "`
-             (doc_id, block_id, page_id, lang_id, chunk_index, source_url, title, text, embedding_csv, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+             (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv, created_at, updated_at)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
         $url = $page->httpUrl(true);
         $title = (string)$page->title;
+        $headings = \json_encode($content['heads']);
+
+
+        $slug = $page->name;
         $idx = 0;
+
         foreach ($chunks as $c) {
             $vec = $this->embedText($c);
             $csv = $this->packCsv($vec);
-            $stmtIns->execute([null, null, $page->id, $langId, (int)$idx++, $url, $title, $c, $csv, $now, $now]);
+            $stmtIns->execute([
+                null,
+                $page->id,
+                $langId,
+                (int)$idx++,
+                $url,
+                $title,
+                $headings,
+                $slug,
+                $c,
+                $csv,
+                $now,
+                $now
+            ]);
         }
     }
 
     /**
      * Orchestrate rendering the RAG view and indexing into vectors for each language.
-     * - Uses PW to switch $user->language, render, and switch back.
-     * - Uses $files->render($view, ['page' => $page]) – if the view is missing, PW will throw.
      */
     public function collectPageText(Page $page, array $cfg): void {
         if (!$this->shouldIndexPage($page, $cfg)) return;
 
-        $files = $this->wire('files');
-        $view  = $cfg['rag_view'] ?? 'chatai-rag.php';
-
         $languages = $this->wire('languages');
         $user = $this->wire('user');
+
+        $this->indexer = new ChatAIIndexer();
 
         if ($languages && $languages->count()) {
             $origLang = $user && $user->language ? $user->language : null;
             foreach ($languages as $lang) {
                 $user->setLanguage($lang);
                 $langId = (int)$lang->id;
-                $html = $files->render($view, ['page' => $page]); // PW will error if not found
-                $text = $this->toPlainText($html);
-                $this->indexPageTextChunks($page, $langId, $text);
+                $content = $this->indexer->buildForPage($page, $langId);
+                $this->indexPageTextChunks($page, $langId, $content);
             }
             if ($origLang) $user->setLanguage($origLang);
         } else {
-            // single-language site – use lang_id = 0
-            $html = $files->render($view, ['page' => $page]);
-            $text = $this->toPlainText($html);
-            $this->indexPageTextChunks($page, 0, $text);
+            $content = $this->indexer->buildForPage($page, 0);
+            $this->indexPageTextChunks($page, 0, $content);
         }
     }
 
@@ -324,6 +348,8 @@ class RAG extends Wire {
             $lang = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
             $userLangId = $lang ? (int)$lang->id : 0;
         }
+
+
         $top = $this->retrieveTopK($userText, $userLangId, 6);
         $context = $this->buildContextFromChunks($top);
 
@@ -331,4 +357,4 @@ class RAG extends Wire {
         return $context !== '' ? $context : '[no site context matched – try another query]';
     }
 }
-// end
+

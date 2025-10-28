@@ -13,15 +13,16 @@
  */
 
 namespace ProcessWire;
-require_once (__DIR__ . "/src/AdminTabs/DashboardTab.php");
-require_once (__DIR__ . "/src/AdminTabs/PersonaliseTab.php");
-require_once (__DIR__ . "/src/AdminTabs/PromptTab.php");
 
 
-use ChatAI\AdminTabs\DashboardTab;
-//use ChatAI\AdminTabs\PersonaliseTab;
-use ChatAI\AdminTabs\PromptTab;
-use stdClass;
+require_once (__DIR__ . "/classes/AdminTabs/DashboardTab.php");
+require_once (__DIR__ . "/classes/AdminTabs/PersonaliseTab.php");
+require_once (__DIR__ . "/classes/AdminTabs/PromptTab.php");
+require_once (__DIR__ . "/classes/AdminTabs/DictionaryTab.php");
+require_once (__DIR__ . "/classes/RAG/RAG.php");
+require_once (__DIR__ . '/classes/Indexing/ChatAIIndexer.php');
+require_once (__DIR__ . '/classes/Indexing/IndexContentExtractor.php');
+require_once (__DIR__ . '/classes/Classifier.php');
 
 
 class ProcessChatAI extends Process
@@ -35,125 +36,161 @@ class ProcessChatAI extends Process
 
     private ?int $lastBitWarned = null;
 
+    protected $indexer;
+
 
     public function __construct()
     {
         parent::__construct();
-        require_once (dirname(__FILE__) . "/src/RAG.php");
     }
+
+
+// TEMP: classifier smoke-test
+    // TEMP: classifier smoke-test; returns JSON string for easy echo in Tracy
+    public function debugClassify(?string $text = null): string {
+        // \ProcessWire\Input $input
+        $input = $this->wire('input');
+
+        // prefer explicit arg; fall back to GET/POST ?cl_text=
+        if ($text === null) $text = (string) ($input->get('cl_text') ?? $input->post('cl_text') ?? '');
+
+        // \ProcessWire\Classifier $clf
+        $clf = new \ProcessWire\Classifier();
+        $clf->setWire($this->wire());
+
+        // ensure cfg loads and dict builds
+        $cfg  = $clf->getCfg();
+        $dict = $clf->buildDictionary();
+        $res  = $clf->classify($text);
+
+        $out = [
+//            'text'     => $text,
+//            'decision' => $res,
+//            'dict_ok'  => is_array($dict),
+//            'cfg_keys' => array_slice(array_keys($cfg), 0, 8), // peek only
+            'dict'     => $dict
+        ];
+
+        return json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
+    }
+
 
     public function init()
     {
+
+        $this->indexer = new \ProcessWire\ChatAIIndexer();
+        $this->indexer->setWire($this->wire());
+        $this->chatai = $this->wire('modules')->get('ChatAI');
+
+ //       $this->addHookAfter('Pages::saved', $this, 'hookPageSaved');
+        $this->addHookAfter('Modules::saveReady', $this, 'hookModuleSaved');
         $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
 
-        $this->addHookAfter('Page::render', function (HookEvent $event) {
-            $inputGet = $this->wire('input')->get;
-            if($inputGet->id || $inputGet->parent_id ) {
-                // only required for page edit/create
-                $this->wire('modules')->get('ChatAI');
-            }
-        });
-
-
-        // 1) BEFORE WRITE: decide eligibility and set/unset the RAG status bit.
-        //    PW will persist this automatically with the in-flight save.
-        $this->addHookBefore('Pages::saveReady', function ($event) {
-            /** @var \ProcessWire\Page $page */
-            $page = $event->arguments(0);
-            $cfg = $this->_loadPromptSettings();
-            $rag = new RAG();
-
-//            $this->registerRagStatusLabel($page);
-
-
-            // Your eligibility rule:
-            // - keep this exactly how you want (template/parent rules, etc.)
-            // - feel free to swap isPublic() for viewable($guest) later; not required now
-            $eligible = ($rag->shouldIndexPage($page, $cfg));
-            $eligible ? $page->setRagIndexed(true) : $page->setRagIndexed(false);
-        });
-
         $this->addHookAfter('Pages::saved', function ($event) {
-            /** @var \ProcessWire\Page $page */
             $page = $event->arguments(0);
             $changes = (array)($event->arguments(1) ?? []);
+            $cfg = $this->loadPromptSettings();
+bd($cfg);
+            if(!isset($cfg['chunk_on_save'])) return;
             $rag = new RAG();
 
-//            $this->registerRagStatusLabel($page);
-bd($page->getStatuses());
-bd($page->status(true));
-
-            // 1) Current truth = saved status bit, set earlier in saveReady
-            $eligible = $page->isRagIndexed(); // your addHookMethod helper
-
-            // 2) DB presence
-            $inDb = false;
             try {
-                $inDb = $rag->hasVectorsForPage((int)$page->id);
+                $shouldReindex = $rag->shouldReindex($page);
             } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', 'hasVectorsForPage error: ' . $e->getMessage());
+                $this->wire('log')->save('chatai', 'shouldReindex error: ' . $e->getMessage());
             }
 
-            // 3) Fast path for ineligible
-            if (!$eligible) {
-                if ($inDb) {
-                    try {
-                        $rag->deletePageVectors($page);
-                    } catch (\Throwable $e) {
-                        $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage());
-                    }
-                }
-                return;
-            }
-
-            // 4) Eligible: decide if we need work
-            //    Trust $changes (you said this works best in your install)
             $changedKeys = array_keys($changes);
             $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
             $contentChanged = !empty($meaningfulKeys);
 
-            if (!$inDb) {
-                // First-time indexing
+            if (!$shouldReindex && !$contentChanged) {
+                return;
+            }
+
+            if($page->isTrash() || !$this->chatai->validTemplate($page, $cfg)) {
                 try {
-                    $rag->collectPageText($page, $this->_loadPromptSettings());
+                    $rag->deletePageVectors($page);
                 } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', 'Index upsert error (first-time): ' . $e->getMessage());
+                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id $page->id: " . $e->getMessage());
                 }
-                return;
             }
 
-            if (!$contentChanged) {
-                // Already in DB, and nothing changed → do nothing
-                return;
-            }
-
-            // 5) Replace vectors on real edits
-            try {
-                $rag->deletePageVectors($page);
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', 'Vector delete before reindex error: ' . $e->getMessage());
-            }
-            try {
-                $rag->collectPageText($page, $this->_loadPromptSettings());
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', 'Index upsert error (reindex): ' . $e->getMessage());
+            if ($contentChanged && $shouldReindex) {
+                try {
+                    $rag->deletePageVectors($page);
+                    $languages = $this->wire('languages');
+                    if($languages && $languages->count()) {
+                        foreach($languages as $lang) {
+                            $rag->collectPageText($page, $cfg);
+                        }
+                    } else {
+                        $rag->collectPageText($page, $cfg);
+                    }
+                } catch (\Throwable $e) {
+                    $this->wire('log')->save('chatai', "Index upsert error, Page id $page->id : " . $e->getMessage());
+                }
             }
         });
 
-
-        // 3) AFTER DELETE: cleanup only (status bit irrelevant once deleted)
         $this->addHookAfter('Pages::deleted', function($event) {
             $page = $event->arguments(0);
             $rag  = new RAG();
             try { $rag->deletePageVectors($page); }
             catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
         });
-
     }
 
-
-
     //*** Hooks ***//
+
+ /*   public function hookPageSaved(HookEvent $event) {
+        $page = $event->arguments(0);
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $cfg = $this->loadPromptSettings();
+        if(!$page->id || !$chatai->validTemplate($page, $cfg) || $cfg['chunk_on_save'] !== 1) return;
+
+        $rag = new RAG();
+        $return = $event->return;
+        $languages = $this->wire('languages');
+        if($languages && $languages->count()) {
+            foreach($languages as $lang) {
+                $rag->collectPageText($page, $cfg);
+            }
+        } else {
+            $rag->collectPageText($page, $cfg);
+        }
+        $event->return = $return;
+    }*/
+
+
+    public function hookModuleSaved(HookEvent $event) {
+        $module = $event->arguments(0);
+        if(!$module instanceof self) return;
+        $return = $event->return;
+        $changed = array_map('strval', array_keys((array)$event->arguments(1)));
+        $watched = [
+            'rag_include_selectors','rag_exclude_selectors','rag_selectors_rev',
+            'stop_terms_hard','stop_terms_soft','custom_terms','meta_terms'
+        ];
+
+        $shouldBump = false;
+        foreach($changed as $k) {
+            foreach($watched as $w) {
+                if($k === $w || str_starts_with($k, $w . '_')) { $shouldBump = true; break 2; }
+            }
+        }
+        if($shouldBump) {
+
+            $indexVersion = $this->indexer->bumpIndexVersion();
+            $cfg = $this->loadPromptSettings();
+            $cfg['index_version'] = $indexVersion;
+            $this->savePromptSettingsJson(json_encode($cfg));
+            $this->_promptMemo = $cfg;
+        }
+
+        $event->return = $return;
+    }
+
 
     public function initValues(HookEvent $event)
     {
@@ -163,6 +200,7 @@ bd($page->status(true));
 
         // Load once and populate defaults
         if (empty($this['values'])) $this['values'] = $this->getValues($form);
+
         $form->populateValues($this['values']);
 
         // Multi-language fill for non-default tabs
@@ -185,56 +223,6 @@ bd($page->status(true));
         $event->removeHook($this);
     }
 
-    // ---- RAG status bit helpers (fast in/out marker) ----
-    /** Return configured single-bit (power-of-two), fallback to 1<<22 */
-
-    /**
-     * Add our friendly RAG status label to this Page instance’s status map.
-     * - No DB calls, no save(), no global registration.
-     * - Purely for nicer labels in Tracy and the Settings → Status panel.
-     */
-
-    protected function ragStatusBit(): int {
-        $cfg = $this->_loadPromptSettings();
-        $bit = (int)($cfg['rag_status_bit'] ?? (1 << 22));
-        // enforce single-bit safety: if not a power of two, fall back
-        if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22);
-        return $bit;
-    }
-    private function registerRagStatusLabel(\ProcessWire\Page $page): void {
-        // Resolve configured single-bit (power-of-two), with safety fallback
-//        $bit = $this->ragStatusBit(); // your existing helper
-
-        $rag = new RAG();
-        $bit = $rag->rag_status_bit; // your existing helper
-
-        // Start from the page’s current status map, or fall back to core map
- //       $map = (array) $page->get('status');
-        $map = (array) $page->status(true);
-        if (!$map) {
-            $map = \ProcessWire\Page::getStatuses(); // name => int
-        }
-
-        // Inject/overwrite our label for the bit (local to this $page)
-        $map['rag_indexed'] = $bit; // or $this->_('rag_indexed') if you want i18n label keys elsewhere
-
-        // Set it back on the Page instance (runtime only)
-        $page->set('status', $map);
-    }
-
-    /** Flip bit on the page (DO NOT save() here) */
-    protected function markIndexed(\ProcessWire\Page $page): void {
-        $bit = $page->ragStatusBit();
-        if (!$page->hasStatus($bit)) $page->addStatus($bit);
-    }
-    protected function unmarkIndexed(\ProcessWire\Page $page): void {
-        $bit = $page->ragStatusBit();
-        if ($page->hasStatus($bit)) $page->removeStatus($bit);
-    }
-    protected function isMarkedIndexed(\ProcessWire\Page $page): bool {
-        return $page->hasStatus($page->ragStatusBit());
-//        return $page->hasStatus(self::statusRag);
-    }
 
     // Tab builders (lazy-loaded or simple new)
     protected function tabs(array $tab): array
@@ -262,6 +250,7 @@ bd($page->status(true));
         if($craftPrompt !== false) {
             $output['personalise'] = new \ChatAI\AdminTabs\PersonaliseTab();
             $output['prompt'] = new \ChatAI\AdminTabs\PromptTab();
+            $output['dictionary'] = new \ChatAI\AdminTabs\DictionaryTab();
         }
 
         return $output;
@@ -278,7 +267,7 @@ bd($page->status(true));
         $this->config->styles->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.css');
         $this->config->scripts->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.js');
 
-        $this->values = $this->_loadPromptSettings();
+        $this->values = $this->loadPromptSettings();
 
         $form = $modules->get('InputfieldForm');
         $form->attr('name+id', $this->formName);
@@ -290,8 +279,11 @@ bd($page->status(true));
             $tabView[$key] = $out[$key];
             $form = $out['form'];
         }
-        // Handle "Run Backfill & Reconcile"
+
+        // Handle "Run Backfill & Reconcile" for vector db
         if ($this->wire('input')->post('chatai_run_backfill')) {
+
+
             $dry = (bool) $this->input->post('chatai_backfill_dry_run');
             $chunk = (int) ($this->input->post('chatai_backfill_chunk') ?: 200);
             if ($chunk < 50)  $chunk = 50;
@@ -302,8 +294,10 @@ bd($page->status(true));
             $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
 
             $this->message($this->_('Backfill & Reconcile complete.') . ' ' . json_encode($summary));
-        }
 
+            // now run the dictionary indexer
+            $this->actionReindexAll();
+        }
 
         // Submit button
         $submit = $this->modules->get('InputfieldSubmit');
@@ -315,7 +309,6 @@ bd($page->status(true));
         if($form->isSubmitted()) {
             $inputPost = $this->wire('input')->post;
             if ($form->process()) {
-                // form processed successfully without errors.
                 $form->populateValues($inputPost);
 
                 $values = [];
@@ -323,8 +316,17 @@ bd($page->status(true));
                     if($key === '' || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
                     $values[$key] = $value;
                 }
-                $this['values'] = $values;
-                $this->savePromptSettingsJson(json_encode($this['values']));
+                $cfg = $this->loadPromptSettings();
+
+                $values['index_version'] = isset($cfg['index_version']) ? $cfg['index_version'] + 1 : 1;
+                $values['rag_candidate_templates'] = $this->chatai->asmToIds($values['rag_candidate_templates'] ?? []);
+                $values['rag_exclude_templates'] = $this->chatai->asmToIds($values['rag_exclude_templates'] ?? []);
+
+                $this->_promptMemo = $values;
+                $this->savePromptSettingsJson(json_encode($this->_promptMemo));
+                // delete old index version from cache
+                $oldVer = $cfg['index_version'];
+                $this->wire('cache')->deleteFor('chatai', "dict:v{$oldVer}:all");
 
             } else {
 //                $errors = $form->getErrors(); // array of error messages…
@@ -345,7 +347,7 @@ bd($page->status(true));
 
     public function getValues($form) : array
     {
-        $savedData = $this->_loadPromptSettings();
+        $savedData = $this->loadPromptSettings();
         if(!empty($savedData)) return $savedData;
 
         // OK, nothing in the database.
@@ -380,13 +382,11 @@ bd($page->status(true));
         return $data;
     }
 
-    protected function savePromptSettingsJson(string $json): bool {
+    private function _savePromptSettingsJson(string $json): bool {
         $chatai = $this->modules->get('ChatAI');
         $db = wire('database'); // WireDatabasePDO (PDO)
         $table = $chatai::dbTablePrompt;
 
-        // Ensure there's a primary key on id
-        // Upsert at id=1
         $sql = "INSERT INTO `$table` (id, json) VALUES (1, ?)
             ON DUPLICATE KEY UPDATE json = VALUES(json), created = CURRENT_TIMESTAMP";
 
@@ -401,22 +401,32 @@ bd($page->status(true));
         }
     }
 
-    public function _loadPromptSettings(): array {
-
-        $chatai = $this->wire('modules')->get('ChatAI');
-        $db = wire('database');
-        $table = $chatai::dbTablePrompt;
-
-        $stmt = $db->prepare("SELECT json FROM `$table` WHERE id = 1 LIMIT 1");
-        $stmt->execute();
-        $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-        if(!$row || !isset($row['json'])) return [];
-        $data = json_decode($row['json'], true) ?: [];
-        $bit  = (int)($chatai->rag_status_bit ?? 0);
-        if ($bit <= 0 || ($bit & ($bit - 1)) !== 0) $bit = (1 << 22); // fallback
-        $data['rag_status_bit'] = $bit;
-        return $data;
+    public function savePromptSettingsJson(string $json): bool
+    {
+        return $this->_savePromptSettingsJson($json);
     }
+
+    private function _loadPromptSettings(): array {
+
+        if (isset($this->_promptMemo)) return $this->_promptMemo;
+
+            $chatai = $this->wire('modules')->get('ChatAI');
+            $db = wire('database');
+            $table = $chatai::dbTablePrompt;
+
+            $stmt = $db->prepare("SELECT json FROM `$table` WHERE id = 1 LIMIT 1");
+            $stmt->execute();
+            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
+            if (!$row || !isset($row['json'])) return [];
+            $cfg = json_decode($row['json'], true) ?: [];
+
+        return  $this->_promptMemo = $cfg;
+    }
+
+    public function loadPromptSettings(): array {
+        return $this->_loadPromptSettings();
+    }
+
 
     protected function buildPrompt(): string {
         $session = $this->wire('session');
@@ -560,7 +570,7 @@ bd($page->status(true));
     public function getLanguageVal(string $name): string
     {
         if(empty($this['values']))
-            $this['values'] = $this->_loadPromptSettings();
+            $this['values'] = $this->loadPromptSettings();
 
         $languages = $this->wire('languages');
         $user = $this->wire('user');
@@ -591,7 +601,7 @@ bd($page->status(true));
 
     public function getWidget(string $path): string {
         if(empty($this['values']))
-            $this['values'] = $this->_loadPromptSettings();
+            $this['values'] = $this->loadPromptSettings();
         $files = wire('files');
         $intro = $this->getIntro();
         $placeholder = $this->getPlaceholder();
@@ -605,7 +615,7 @@ bd($page->status(true));
         $sanitizer = $this->wire('sanitizer');
         $message = $sanitizer->text($message);
         if(empty($this['values']))
-            $this['values'] = $this->_loadPromptSettings();
+            $this['values'] = $this->loadPromptSettings();
         $blacklisted = false;
         if($this['values']['use_blacklist'] !== 1) return $blacklisted;
 
@@ -625,13 +635,14 @@ bd($page->status(true));
 
     // Dashboard features
     /** Compact, single source of truth for eligibility (same as your saveReady logic) */
-    protected function isEligibleForRag(\ProcessWire\Page $page, array $cfg): bool {
+ /*   protected function isEligibleForRag(\ProcessWire\Page $page, array $cfg): bool {
         $rag = new RAG();
         if (!$rag->shouldIndexPage($page, $cfg)) return false;
         return (bool) $page->isPublic(); // (You can swap to viewable($guest) later)
-    }
+    }*/
 
-    /** Path to our backfill log */
+
+    /** Path to backfill log */
     protected function backfillLogPath(): string {
         $config = $this->wire('config');
         $dir = $config->paths->logs . 'chatai';
@@ -655,11 +666,12 @@ bd($page->status(true));
      */
     protected function runBackfillReconcile(bool $dryRun = false, int $chunk = 200): array {
         $pages = $this->wire('pages');
-        $cfg   = $this->_loadPromptSettings();
+        $cfg   = $this->loadPromptSettings();
+
         $rag   = new RAG();
         $config = $this->wire('config');
+        $chatai = $this->wire('modules')->get('ChataAI');
 
-        $bit   = $this->ragStatusBit();
         $guest = $this->wire('users')->getGuestUser();
         $http404 = $config->http404PageID;
 
@@ -669,14 +681,16 @@ bd($page->status(true));
             'indexed_new' => 0,
             'indexed_replaced' => 0,
             'deleted' => 0,
-            'skipped_ok' => 0,
             'errors' => 0,
             'dry_run' => $dryRun,
             'chunk' => $chunk,
-            'model' => $this->model ?? '',
+            'model' => $this->chatai->model ?? '',
         ];
 
         // Broad candidate scan — you may narrow by templates/parents in RAG::shouldIndexPage
+
+        bd($cfg, 'process 674');
+
         $selector = "has_parent!=2, status!=trash, id!=$http404, template!=http404, include=hidden";
         $total = $pages->count($selector);
         $offset = 0;
@@ -685,24 +699,19 @@ bd($page->status(true));
             foreach ($pages->find("$selector, start=$offset, limit=$chunk") as $page) {
                 try {
                     // Decide eligibility (same as saveReady)
-                    $eligible = $this->isEligibleForRag($page, $cfg);
-                    $marked   = $page->hasStatus($bit);
-                    $inDb     = $rag->hasVectorsForPage((int)$page->id);
+                    //$eligible = $rag->shouldIndexPage($page, $cfg);
+                    $eligible = $this->chatai->validTemplate($page, $cfg);
+                    $inDb     = $rag->shouldReindex($page);
 
                     if ($eligible) $summary['eligible_total']++; else $summary['ineligible_total']++;
 
-                    // Reconcile status bit to reflect eligibility (in memory only — no save())
-                    if ($eligible && !$marked) $page->addStatus($bit);
-                    if (!$eligible && $marked) $page->removeStatus($bit);
-
                     if (!$eligible) {
-                        if ($inDb) {
+                        if ($inDb && $page->isTrash()) {
                             if (!$dryRun) $rag->deletePageVectors($page);
                             $summary['deleted']++;
                             $this->backfillLog(['ev'=>'delete', 'id'=>$page->id, 'url'=>$page->url]);
-                        } else {
-                            $summary['skipped_ok']++;
                         }
+
                         if($page->id === $config->http404PageID) {
                             $this->backfillLog(['ev'=>'warn_excluded', 'id'=>$page->id, 'reason'=>'id denylist']);
                         }
@@ -715,10 +724,17 @@ bd($page->status(true));
                         $summary['indexed_new']++;
                         $this->backfillLog(['ev'=>'index_new', 'id'=>$page->id, 'url'=>$page->url]);
                         continue;
+                    } else {
+                        // Already in DB
+                        if (!$dryRun) {
+                            $rag->deletePageVectors($page);
+                            $rag->collectPageText($page, $cfg);
+                            $this->backfillLog(['ev' => 'index_upd', 'id' => $page->id, 'url' => $page->url]);
+                        }
+                        $summary['indexed_replaced']++;
+                        continue;
                     }
 
-                    // Already in DB → no content check here (bulk reconcile). Keep it light.
-                    $summary['skipped_ok']++;
                 } catch (\Throwable $e) {
                     $summary['errors']++;
                     $this->backfillLog(['ev'=>'error', 'id'=>$page->id ?? 0, 'msg'=>$e->getMessage()]);
@@ -731,8 +747,31 @@ bd($page->status(true));
         return $summary;
     }
 
+    public function actionReindexAll(int $langId = 0) {
+        $indexer = new \ProcessWire\ChatAIIndexer();
+        $indexer->setWire($this->wire());
+        //$pages = $this->wire('pages')->findMany('has_parent!=2, include=visible, template!=admin');
+        $pages = $this->wire('pages')->findMany('has_parent!=2, template!=admin');
+bd($pages);
+
+        $languages = $this->wire('languages');
+        $langIds = ($languages && $languages->count())
+            ? array_map(fn($l) => (int)$l->id, iterator_to_array($languages))
+            : [ (int)$langId ];
+
+        foreach($pages as $p) {
+            foreach($langIds as $lid) $indexer->buildForPage($p, $lid);
+        }
+        $next = $indexer->bumpIndexVersion();
+        $cfg = $this->loadPromptSettings();
+        $cfg['index_version'] = $next;
+        $this->savePromptSettingsJson(json_encode($cfg));
+        $this->_promptMemo = $cfg;
+        $this->message('Reindex complete.');
+    }
+
+
     /* Hookable methods */
-    /** Hook: mutate outbound request before sending to the model. */
     public function ___beforeSend(array $request): array {
         return $request; // no-op by default
     }
@@ -747,7 +786,7 @@ bd($page->status(true));
         return null; // default: no CTA
     }
 
-    /** Hook: last-mile payload tweak before returning JSON to the widget. */
+    /** Hook: payload tweak before returning JSON to the widget. */
     public function ___afterResponse(array $payload): array {
         return $payload; // no-op by default
     }
