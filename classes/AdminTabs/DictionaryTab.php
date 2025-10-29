@@ -43,27 +43,20 @@ class DictionaryTab
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
-        $f->columnWidth(50);
+        $f->columnWidth(100);
         $fieldset->add($f);
 
-        // Meta terms
-        $f = $m->get('InputfieldTextarea');
-        $f->attr('name+id', 'meta_terms');
-        $f->label($m->_('Meta terms'));
-        $value = $data['meta_terms'] ?? 'api, api key, aws, billing, bug, cache, cdn, cloudflare, console, cookie, crash, css, ddev, error, gcp, git, github, html, javascript, latency, login, logout, mail, mailpit, model, module, php, pricing, processwire, prompt, rate limit, refresh, reload, selector, session, smtp, stack trace, stripe, subscription, template, timeout, token, upgrade, version, webhook';
-        $f->notes("IT related terms\nComma separated.");
-        $f->attr('value', $value);
-        $f->stripTags = true;
-        $f->useLanguages = true;
-        $f->columnWidth(50);
-        $fieldset->add($f);
+
+
+
+        $inputfields->add($fieldset);
 
         // Hard stop words
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'stop_terms_hard');
         $f->label($m->_('Hard stop noise words'));
         $f->notes("Phrases the bot should ignore\nComma separated.");
-        $value = $data['stop_terms_hard_'] ?? 'the, a, an, of, for, to, in, on, at, by, with, from, and, or, but,about, info, information, details, stuff, things, something, anything,hi, hello, hey, please, thanks, thank you, cheers, ok, okay,etc, misc, n/a, tba, tbc';
+        $value = $data['stop_terms_hard'] ?? 'the, a, an, of, for, to, in, on, at, by, with, from, and, or, but,about, info, information, details, stuff, things, something, anything,hi, hello, hey, please, thanks, thank you, cheers, ok, okay,etc, misc, n/a, tba, tbc';
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -82,34 +75,70 @@ class DictionaryTab
         $f->columnWidth(50);
         $fieldset->add($f);
 
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'smalltalk');
+        $fieldset->label($m->_('Smalltalk'));
+
         // Small talk
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'smalltalk_triggers');
-        $f->label($m->_('Small talk'));
+        $f->label($m->_('Triggers'));
         $f->notes("Irrelevant chit chat\nComma separated.");
-        $value = $data['smalltalk_triggers'] ?? 'hi, hello, hey, ok, thanks, bonjour, salut';
+        $value = $data['smalltalk_triggers'] ?? 'hi, hello, hey, ok, thanks, salut';
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
         $f->columnWidth(50);
         $fieldset->add($f);
 
-        // Question words
-        $f = $m->get('InputfieldTextarea');
-        $f->attr('name+id', 'question_words');
-        $f->label($m->_('Questions'));
-        $f->notes("Comma separated.");
-        $value = $data['question_words'] ?? 'what, when, where, who, why, how, which';
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'smalltalk_reply');
+        $f->label($m->_('Reply'));
+        $value = $data['smalltalk_reply'] ?? 'Hello. How can I help?';
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
         $f->columnWidth(50);
         $fieldset->add($f);
+
+        $inputfields->add($fieldset);
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'meta');
+        $fieldset->label($m->_('Meta'));
+
+        // Meta terms
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name+id', 'meta_terms');
+        $f->label($m->_('Triggers'));
+        $value = $data['meta_terms'] ?? 'api, api key, aws, billing, bug, cache, cdn, cloudflare, console, cookie, crash, css, ddev, error, gcp, git, github, html, javascript, latency, login, logout, mail, mailpit, model, module, php, pricing, processwire, prompt, rate limit, refresh, reload, selector, session, smtp, stack trace, stripe, subscription, template, timeout, token, upgrade, version, webhook';
+        $f->notes("IT related terms\nComma separated.");
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(50);
+        $fieldset->add($f);
+
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'meta_reply');
+        $f->label($m->_('Reply'));
+        $value = $data['meta_reply'] ?? "I can help with pages and information on this site. Ask me what you’re looking for.";
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(50);
+        $fieldset->add($f);
+
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'actions');
+        $fieldset->label($m->_('Actions'));
+
 
         // Action verbs
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'action_verbs');
-        $f->label($m->_('Action verbs'));
+        $f->label($m->_('Triggers'));
         $f->notes("Comma separated.");
         $value = $data['action_verbs'] ?? 'switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove';
         $f->attr('value', $value);
@@ -118,10 +147,27 @@ class DictionaryTab
         $f->columnWidth(50);
         $fieldset->add($f);
 
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'action_reply');
+        $f->label($m->_('Reply'));
+        $value = $data['action_reply'] ?? "Sure. Tell me what you'd like me to do with the site content.";
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(50);
+        $fieldset->add($f);
+
+        $inputfields->add($fieldset);
+
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'followups');
+        $fieldset->label($m->_('Follow up'));
+
         // Followup terms
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'followup_terms');
-        $f->label($m->_('Followup terms'));
+        $f->label($m->_('Triggers'));
         $f->notes("Comma separated.");
         $value = $data['followup_terms'] ?? 'this, that, those, the second one, more, details, expand, …, ...';
         $f->attr('value', $value);
@@ -130,7 +176,53 @@ class DictionaryTab
         $f->columnWidth(50);
         $fieldset->add($f);
 
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'followup_reply');
+        $f->label($m->_('Reply'));
+        $value = $data['followup_reply'] ?? "Which page or section should I expand on?";
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(50);
+        $fieldset->add($f);
+
         $inputfields->add($fieldset);
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'questions');
+        $fieldset->label($m->_('Questions'));
+
+        // Question words
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name+id', 'question_words');
+        $f->label($m->_('Triggers'));
+        $value = $data['question_words'] ?? 'what, when, where, who, why, how, which';
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(100);
+        $fieldset->add($f);
+
+        $inputfields->add($fieldset);
+
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'ambiguous');
+        $fieldset->label($m->_('Ambiguous or no context'));
+
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'no_context_reply');
+        $f->label($m->_('Reply'));
+        $value = $data['no_context_reply'] ?? "Tell me what you’re looking for and I’ll point you to the right page.";
+        $f->attr('value', $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(100);
+        $fieldset->add($f);
+
+        $inputfields->add($fieldset);
+
+
 
         $form->add($inputfields);
 
