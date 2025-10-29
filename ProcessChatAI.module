@@ -90,7 +90,6 @@ class ProcessChatAI extends Process
             $page = $event->arguments(0);
             $changes = (array)($event->arguments(1) ?? []);
             $cfg = $this->loadPromptSettings();
-bd($cfg);
             if(!isset($cfg['chunk_on_save'])) return;
             $rag = new RAG();
 
@@ -323,10 +322,16 @@ bd($cfg);
                 $values['rag_exclude_templates'] = $this->chatai->asmToIds($values['rag_exclude_templates'] ?? []);
 
                 $this->_promptMemo = $values;
+                bd($this->_promptMemo);
+
                 $this->savePromptSettingsJson(json_encode($this->_promptMemo));
                 // delete old index version from cache
                 $oldVer = $cfg['index_version'];
                 $this->wire('cache')->deleteFor('chatai', "dict:v{$oldVer}:all");
+
+                // save new index version to cache
+//                $newVer = $values['index_version'];
+//                $this->wire('cache')->saveFor('chatai', "dict:v{$newVer}:all", $values);
 
             } else {
 //                $errors = $form->getErrors(); // array of error messages…
@@ -481,8 +486,6 @@ bd($cfg);
             // plain tag names (p, ul, li, …) → <p>, <ul>, …
             return '<' . $t . '>';
         }, $allowedClean));
-
-
 
         $prompt = '';
         // Assemble your safe default system prompt
