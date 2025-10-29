@@ -24,6 +24,7 @@ class RAG extends Wire {
     /*** TABLE NAMES ***/
     public const CHATAI_VEC_TABLE = 'chatai_vec_chunks';
 
+    public $indexer = '';
     public function __construct() { parent::__construct(); }
 
     public function init() {
@@ -53,6 +54,7 @@ class RAG extends Wire {
         if ($page->id === $config->http404PageID) return false;                         // your 404 page (or use config)
         if (in_array($page->template->name, ['http404'], true)) return false;
         if (in_array($page->name, ['http404'], true)) return false;
+        if (!$page->isPublic()) return false;
 
         return true;
     }
@@ -64,14 +66,22 @@ class RAG extends Wire {
      */
     public function shouldReindex(Page $page): bool
     {
-        $db  = $this->wire('database');
-        $tbl = $db->escapeTable(self::CHATAI_VEC_TABLE);
+        $db    = $this->wire('database');
+        $pages = $this->wire('pages');
+        $tbl   = $db->escapeTable(self::CHATAI_VEC_TABLE);
+
+        // Ensure we’re not reusing a stale Page instance
+        $page  = $this->wire('pages')->getFresh($page);
 
         $stmt = $db->prepare("SELECT MAX(updated_at) AS m FROM {$tbl} WHERE page_id = ?");
-        $stmt->execute([(int)$page->id]);
-        $max = $stmt->fetchColumn(); // null if no rows
+        $stmt->execute([(int) $page->id]);
+        $max  = $stmt->fetchColumn(); // null if no rows
 
-        return !$max || strtotime($max) < (int)$page->modified;
+        $last = $max ? (int) strtotime((string) $max) : 0;
+        $mod  = (int) $page->modified;
+
+        // Small epsilon to defeat clock/DB jitter
+        return ($mod > $last + 1);
     }
 
 
@@ -260,14 +270,15 @@ class RAG extends Wire {
     public function collectPageText(Page $page, array $cfg): void {
         if (!$this->shouldIndexPage($page, $cfg)) return;
 
-        $languages = $this->wire('languages');
         $user = $this->wire('user');
 
         $this->indexer = new ChatAIIndexer();
 
-        if ($languages && $languages->count()) {
+        $pageLangs = $page->getLanguages();
+
+        if ($pageLangs->count > 0 && $page->isPublic()) {
             $origLang = $user && $user->language ? $user->language : null;
-            foreach ($languages as $lang) {
+            foreach ($pageLangs as $lang) {
                 $user->setLanguage($lang);
                 $langId = (int)$lang->id;
                 $content = $this->indexer->buildForPage($page, $langId);
@@ -339,22 +350,90 @@ class RAG extends Wire {
     }
 
     /**
-     * Example glue to your chat call – kept as a stub.
      * Construct messages with the built context and call your existing ChatAI chat method.
      */
+
     public function answerWithRAG(string $userText, ?int $userLangId = null): string {
+        // resolve current language id
         if ($userLangId === null) {
             $languages = $this->wire('languages');
             $lang = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
-            $userLangId = $lang ? (int)$lang->id : 0;
+            $userLangId = $lang ? (int) $lang->id : 0;
         }
 
+        // load prompt settings once
+        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+        $cfg = $chatProcess ? (array) $chatProcess->loadPromptSettings() : [];
 
-        $top = $this->retrieveTopK($userText, $userLangId, 6);
-        $context = $this->buildContextFromChunks($top);
+        // classify the message
+        $classifier = new \ProcessWire\Classifier();
+        $classifier->setWire($this->wire());
+        $decision = $classifier->classify($userText); // ['label' => ..., 'use_rag' => bool]
 
-        // TODO: integrate with your existing chat call. For now, return the context for inspection.
-        return $context !== '' ? $context : '[no site context matched – try another query]';
+        // handle non-RAG routes first
+        switch ($decision['label']) {
+            case 'small_talk':
+                $reply = $this->cfgLang('smalltalk_reply', $cfg, $userLangId);
+                return $reply !== '' ? $reply : 'Hello. How can I help?';
+
+            case 'ambiguous':
+                $reply = $this->cfgLang('no_context_reply', $cfg, $userLangId);
+                return $reply !== '' ? $reply : 'Tell me what you’re looking for and I’ll point you to the right page.';
+
+            case 'meta':
+                $reply = $this->cfgLang('meta_reply', $cfg, $userLangId);
+                if ($reply === '') $reply = $this->cfgLang('no_context_reply', $cfg, $userLangId);
+                return $reply !== '' ? $reply : 'I can help with pages and information on this site. Ask me what you’re looking for.';
+
+            case 'action':
+                $reply = $this->cfgLang('action_reply', $cfg, $userLangId);
+                return $reply !== '' ? $reply : "Sure. Tell me what you'd like me to do with the site content.";
+        }
+
+        // RAG path (info_query or anything that set use_rag=true)
+        if (!empty($decision['use_rag'])) {
+            // retrieve & build context
+            $top = $this->retrieveTopK($userText, $userLangId, 6); // keep K=6 as before
+            $context = $this->buildContextFromChunks($top);
+
+            // if context exists, return it (your real chat call would consume this)
+            if ($context !== '') {
+                return $context; // in production, pass context + userText to your LLM call
+            }
+
+            // fallback if retrieval missed
+            return (string) ($cfg['no_context_reply'] ?? '[no site context matched – try another query]');
+        }
+
+        // ultimate fallback
+        return (string) ($cfg['no_context_reply'] ?? 'How can I help with the site content?');
     }
+
+    // fetch cfg value by language: key__{langId} → key → ''
+    protected function cfgLang(string $key, array $cfg, int $langId): string {
+        $k = $key . '__' . $langId;
+        return (string)($cfg[$k] ?? $cfg[$key] ?? '');
+    }
+
+    /**
+     * Return the list of languages that are publicly viewable for this page.
+     */
+    function ragPublicLanguages(Page $page): array {
+        $guest = wire('users')->get('guest');
+        $langs = [];
+
+        foreach($page->getLanguages() as $lang) {
+            // Skip if this language isn't viewable to guests for this page
+            if(!$page->viewable($guest, $lang)) continue;
+
+            // Extra guard: page itself must be public (no admin-only, etc.)
+            if(!$page->isPublic()) continue;
+
+            $langs[] = $lang;
+        }
+
+        return $langs;
+    }
+
 }
 
