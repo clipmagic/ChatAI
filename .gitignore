@@ -1,0 +1,58 @@
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# PHPStorm / JetBrains IDE
+.idea/
+*.iml
+
+# ProcessWire cache, logs, and sessions
+/site/assets/cache/
+/site/assets/logs/
+/site/assets/sessions/
+/site/assets/procache-
+/site/assets/ProCache-
+
+# ProcessWire uploaded files (optional)
+/site/assets/files/
+
+# ProcessWire backups
+/site/assets/backups/
+
+# Composer dependencies
+/vendor/
+composer.lock
+
+# Node / package managers (optional)
+node_modules/
+.npm/
+.pnpm-store/
+
+# DDEV environment
+.ddev/
+
+# Environment and temporary files
+.env
+.env.*
+*.log
+*.sql
+*.sqlite
+*.swp
+*.swo
+
+# tmp dir
+tmp/
