@@ -1,16 +1,4 @@
 <?php namespace ProcessWire;
-/*
- * Copyright (c) 2025.
- * Clip Magic - Prue Rowland
- * Web: www.clipmagic.com.au
- * Email: admin@clipmagic.com.au
- *
- * ProcessWire 3.x
- * Copyright (C) 2014 by R
- * Licensed under GNU/GPL
- *
- * https://processwire.com
- */
 ?>
 <!-- Chatbot Toggle Button -->
 <button id="chatbot-toggle" class="chatbot-toggle" aria-label="Open chatbot">
@@ -38,15 +26,46 @@
         </form>
     </div>
 
-    <div class="chatbot-welcome chatbot-msg bot">
-        <?=$intro?>
+    <div class="chatbot-msg-wrapper">
+        <div class="chatbot-welcome chatbot-msg bot">
+            <?=$intro?>
+        </div>
+        <div id="chatbot-messages" class="chatbot-messages"></div>
     </div>
-    <div id="chatbot-messages" class="chatbot-messages"></div>
 
-    <form id="chatbot-form" class="chatbot-form">
-        <input type="text" id="chatbot-input" data-ln="<?=$user->language->id?>" class="chatbot-input" placeholder="<?=$placeholder?>" required>
-        <button type="submit" class="chatbot-submit"><?=$button_text?></button>
-    </form>
+    <div class="chatbot-input-wrapper">
+        <form id="chatbot-form" class="chatbot-form">
+            <input type="text" id="chatbot-input" data-ln="<?=$user->language->id?>" class="chatbot-input" placeholder="<?=$placeholder?>" required aria-label="Chatbox input field">
+            <button type="submit" class="chatbot-submit"><?=$button_text?></button>
+        </form>
+
+        <div class="chatbot-meta-row">
+            <div id="chatbot-status"
+                 class="chatbot-status"
+                 aria-live="polite"
+                 aria-atomic="true"
+                 hidden>
+                <span class="chatbot-status-sr"><?=$thinking_text?></span>
+                <span class="chatbot-status-visible" aria-hidden="true">
+                <?=$thinking_text?>
+            </span>
+            </div>
+
+            <div class="chatbot-clear" hidden>
+                <button type="button"
+                        class="chatai-reset"
+                        aria-label="Reset this chat and clear the current conversation">
+                    <?=$reset_text?>
+                </button>
+            </div>
+        </div>
+    <footer class="chatbot-footer">
+        <p class="chatbot-disclaimer"><?=$disclaimer_text?></p>
+
+        <div class="chatbot-footer-actions">
+            <?=$footer_text?>
+        </div>
+    </footer>
 </dialog>
 
 

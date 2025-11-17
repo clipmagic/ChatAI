@@ -1,18 +1,4 @@
 <?php
-
-/*
- * Copyright (c) 2025.
- * Clip Magic - Prue Rowland
- * Web: www.clipmagic.com.au
- * Email: admin@clipmagic.com.au
- *
- * ProcessWire 3.x
- * Copyright (C) 2014 by R
- * Licensed under GNU/GPL
- *
- * https://processwire.com
- */
-
 namespace ChatAI\AdminTabs;
 
 use ProcessWire;
@@ -68,23 +54,27 @@ class DashboardTab
         $html = '<div class="chatai-metrics"><table class="uk-table uk-table-small"><thead><tr>'
             . '<th>t</th><th>ok</th><th>err</th><th>ms</th><th>count</th><th>rem</th><th>stop</th><th>model</th></tr></thead><tbody>';
 
+        // TODO - fix - broke with enforcelimit method
         if (is_file($logPath)) {
-            $lines = @file($logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-            foreach (array_slice(array_reverse($lines), 0, 50) as $line) {
-                $j = json_decode($line, true);
-                if (!is_array($j)) continue;
-                $html .= sprintf(
-                    '<tr><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>',
-                    htmlspecialchars($j['t'] ?? '', ENT_QUOTES, 'UTF-8'),
-                    !empty($j['ok']) ? '✓' : '✗',
-                    htmlspecialchars($j['err_code'] ?? '', ENT_QUOTES, 'UTF-8'),
-                    (int)($j['latency_ms'] ?? 0),
-                    (int)($j['count'] ?? 0),
-                    isset($j['remaining']) ? (int)$j['remaining'] : '',
-                    !empty($j['stop']) ? '■' : '',
-                    htmlspecialchars(($j['model'] ?? '') . ' ' . ($j['endpoint'] ?? ''), ENT_QUOTES, 'UTF-8')
-                );
-            }
+
+//            $lines = @file($logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
+//            foreach (array_slice(array_reverse($lines), 0, 50) as $line) {
+//                $j = json_decode($line, true);
+//                if (!is_array($j)) continue;
+//                $html .= sprintf(
+//                    '<tr><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>',
+//                    htmlspecialchars($j['t'] ?? '', ENT_QUOTES, 'UTF-8'),
+//                    !empty($j['ok']) ? '✓' : '✗',
+//
+//                    htmlspecialchars($j['err_code'] ?? '', ENT_QUOTES, 'UTF-8'),
+//                    (int)($j['latency_ms'] ?? 0),
+//                    (int)($j['count'] ?? 0),
+//                    isset($j['remaining']) ? (int)$j['remaining'] : '',
+//                    !empty($j['stop']) ? '■' : '',
+//                    htmlspecialchars($j['err_code'] ?? '', ENT_QUOTES, 'UTF-8'),
+//                );
+//            }
+
         } else {
             $html .= '<tr><td colspan="8"><em>No metrics yet.</em></td></tr>';
         }

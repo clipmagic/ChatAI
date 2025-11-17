@@ -4,7 +4,17 @@
     --chat-pale: #fafafa;
     --chat-fg: #333;
     --chat-accent: rgba(8, 91, 236, 0.1);
-    --chat-warning: #dd1515;
+    --chat-user: rgba(8, 91, 236, 1);
+
+
+    --chat-accent-contrast: #ffffff;
+    --chat-warning-bg: #dd1515;
+    --chat-warning-fg: #fafafa;
+    --chat-cutoff-bg: #f5f0d8;
+    --chat-cutoff-fg: #4a3b1a;
+    --chat-cutoff-border: #d1b55c;
+
+
     --chat-border: #ccc;
     --chat-radius: 8px;
     --chat-message-padding: 1rem;
@@ -20,7 +30,12 @@
         transition-duration: 0.01ms !important;
         scroll-behavior: auto !important;
     }
+
+    .chatbot-status-visible {
+        animation: none !important;
+    }
 }
+
 
 @media (prefers-color-scheme: dark) {
     :root {
@@ -28,6 +43,10 @@
         --chat-fg: #f5f5f5;
         --chat-accent: rgba(8, 91, 236, 0.1);
         --chat-border: #444;
+
+        /* Dark variants */
+        --chat-warning-bg: #b91c1c;
+        --chat-warning-fg: #fef2f2;
     }
 }
 
@@ -56,10 +75,11 @@
     border: none;
     border-radius: var(--chat-radius);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    /*
     position: fixed;
+    */
     inset: auto var(--chat-margin-x) 5rem auto;
 
-    padding: 0;
     font-family: var(--chat-font);
     background: var(--chat-bg);
     color: var(--chat-fg);
@@ -75,41 +95,27 @@
 
 }
 
-
-
-
-
 #chatbot-dialog[open] {
+    display: grid;
+    grid-template-rows: max-content 1fr max-content max-content;
     opacity: 1;
-
     max-height: 80vh;
-    scroll-margin-block-start: 3rem;
-
-    width: min(80%, 50ch);
+    width: min(70%, 50ch);
     border: none;
     border-radius: var(--chat-radius);
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    position: fixed;
     inset: auto 1.5rem 5rem auto;
-
-    padding: 0;
+    padding: var(--chat-message-padding);
     font-family: var(--chat-font);
     background: var(--chat-bg);
     color: var(--chat-fg);
     z-index: 1001;
-
     transform-origin: bottom right;
     transform: translateX(calc(var(--chat-margin-x)*-1));
-
     transition: opacity 0.5s ease-out,
     transform 0.5s ease-out,
     overlay 0.5s ease-out allow-discrete,
     display 0.5s ease-out allow-discrete;
-
-    & p {
-        text-wrap: pretty;
-    }
-
 }
 
 
@@ -128,7 +134,6 @@
     justify-content: space-between;
     align-items: center;
     background: var(--chat-bg);
-    padding: var(--chat-message-padding);
     border-bottom: 1px solid var(--chat-border);
 }
 
@@ -156,15 +161,19 @@
     }
 }
 
+.chatbot-msg-wrapper {
+    overflow-y: scroll;
+    overscroll-behavior: contain;
+    min-height: 0;
+}
+
 .chatbot-messages {
-    max-height: 80vh;
-    overflow-y: auto;
-    padding: var(--chat-message-padding);
-    font-size: 0.95rem;
+    font-size: clamp(0.9rem, 0.9rem + 0.1vw, 1rem);
     background: var(--chat-bg);
     display: flex;
     flex-direction: column;
     gap: 0.5rem;
+    text-wrap: pretty;
 }
 
 .chatbot-welcome {
@@ -184,9 +193,10 @@
 
 .chatbot-msg.user {
     align-self: flex-end;
-    background: var(--chat-accent);
-    color: white;
+    background: var(--chat-user);
+    color: var(--chat-accent-contrast);
 }
+
 
 .chatbot-msg.bot {
     align-self: flex-start;
@@ -194,50 +204,219 @@
     color: #111;
 
     &.chatbot-warning {
-        background: var(--chat-warning);
+        background: var(--chat-warning-bg);
         font-weight: bold;
-        color: var(--chat-pale);
+        color: var(--chat-warning-fg);
+    }
+
+    &.chatbot-cutoff {
+        background-color: var(--chat-cutoff-bg, #f5f0d8);
+        color: var(--chat-cutoff-fg, #4a3b1a);
+        border-left: 3px solid var(--chat-cutoff-border, #d1b55c);
+        font-size: 0.9rem;
     }
 }
 
-@media (prefers-color-scheme: dark) {
-    .chatbot-msg.bot {
-        background: #2a2a2a;
-        color: #eee;
-    }
-}
-
+/* Soft cutoff: visually distinct, but not red */
+./*chatbot-msg.bot,*/
 .chatbot-form {
-    display: flex;
-    border-top: 1px solid var(--chat-border);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    column-gap: var(--chat-message-padding);
+    margin-block: var(--chat-message-padding);
 }
 
 .chatbot-input {
-    flex: 1;
     border: none;
-    padding: 0.75rem;
+    border-block-end: 1px solid var(--chat-border);
     font-size: 1rem;
     background: var(--chat-bg);
     color: var(--chat-fg);
+
+}
+
+.chatbot-submit {
+    padding-block: calc(var(--chat-message-padding) * .5);
+}
+
+.chatbot-meta-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 0.25rem;
+    font-size: 0.85rem;
+}
+
+.chatbot-clear .chatai-reset {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--chat-fg);
+    text-decoration: underline;
+    text-underline-offset: 0.12em;
+    cursor: pointer;
+    font: inherit;
+}
+
+/* Reuse your existing focus style */
+.chatbot-clear .chatai-reset:focus-visible {
+    outline: 2px solid var(--chat-user);
+    outline-offset: 2px;
 }
 
 
 
+.chatbot-status {
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.chatbot-status[aria-busy="true"] {
+    opacity: 1;
+}
+
+/* honor [hidden] if you ever toggle it directly */
+.chatbot-status[hidden] {
+    display: none;
+}
+
+.chatbot-status-visible {
+    display: inline-block;
+    animation: chatbotThinkingPulse 1.3s ease-in-out infinite;
+}
+
+@keyframes chatbotThinkingPulse {
+    0% {
+        opacity: 0.3;
+        transform: translateX(0);
+    }
+    50% {
+        opacity: 1;
+        transform: translateX(2px);
+    }
+    100% {
+        opacity: 0.3;
+        transform: translateX(0);
+    }
+}
+
+/* visually hidden for screen readers */
+.chatbot-status-sr {
+    border: 0;
+    clip: rect(0 0 0 0);
+    height: 1px;
+    width: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    position: absolute;
+}
+
+.chatbot-footer {
+    font-size: 0.8rem;
+}
+
+/* Focus rings for keyboard users */
+.chatbot-toggle:focus-visible,
+.chatbot-close:focus-visible,
+.chatbot-form button:focus-visible,
+.chatbot-input:focus-visible {
+    outline: 2px solid var(--chat-user);
+    outline-offset: 3px;
+}
+
+/* Link styling inside messages */
+.chatbot-msg a {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 0.12em;
+}
+
+.chatbot-msg a:hover {
+    text-decoration-thickness: 0.11em;
+}
+
+.chatbot-msg a:focus-visible {
+    outline: 2px solid var(--chat-user);
+    outline-offset: 2px;
+}
+
+/* RTL support for message alignment */
+[dir="rtl"] .chatbot-msg.user {
+    align-self: flex-start;
+}
+
+[dir="rtl"] .chatbot-msg.bot {
+    align-self: flex-end;
+}
+
+/* Inline code styling */
+.chatbot-msg code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.9em;
+    padding: 0.1em 0.3em;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    .chatbot-msg code {
+        background: rgba(255, 255, 255, 0.1);
+    }
+}
+
+/* Mobile tuning */
+@media (max-width: 480px) {
+    .chatbot-toggle {
+        inset: auto 1rem 1rem auto;
+        padding: 0.9rem;
+    }
+
+    #chatbot-dialog,
+    .chatbot-dialog {
+        width: 95vw;
+        inset: auto 0.75rem 4.5rem auto;
+    }
+}
+
+/* Hide widget in print views */
+@media print {
+    .chatbot-toggle,
+    #chatbot-dialog,
+    .chatbot-dialog {
+        display: none !important;
+    }
+}
+
+/* TinyMCE and CKEditor classes */
+.align_left {text-align: left}
+.align_center {text-align: center}
+.align_right {text-align: right}
+
 /*
- * TODO (nice-to-haves, not urgent)
- * 1) Focus states: add visible focus rings for .chatbot-toggle, inputs, and buttons (WCAG 2.4.7).
- * 2) Reduced motion: shorten dialog transition and disable icon micro-animations when prefers-reduced-motion.
- * 3) High-contrast theme: expose --chat-accent-contrast and tweak .chatbot-msg.bot bg/fg for contrast ≥ 4.5:1.
- * 4) RTL support: add [dir="rtl"] overrides for alignment (flip .user/.bot align-self and margins).
- * 5) Typography scale: clamp() font sizes for small screens; ensure .chatbot-messages uses text-wrap: pretty;
- * 6) Link styling: explicit :focus-visible and :hover states inside bot HTML (a { text-decoration: underline; }).
- * 7) Code blocks: style inline <code> inside messages; optional pre code block if we allow it later.
- * 8) Scroll behavior: consider overscroll-behavior: contain; and better scroll-to-bottom on new messages.
- * 9) Warning color: introduce --chat-warning-bg and --chat-warning-fg for better theming of .chatbot-warning.
- * 10) Container queries: size dialog using @container instead of viewport where supported.
- * 11) Mobile spacing: adjust inset/padding at <= 360px; ensure tap targets ≥ 44px.
- * 12) Print styles: hide the dialog and toggle when printing.
- * 13) Remaining-messages badge: small, unobtrusive counter in header; aria-live="polite"; only visible when ≤2.
- * 14) Message reply color: differentiate bot/user bubbles from the submit button. Introduce --chat-reply-bg/fg tokens; avoid using the semi-opaque button color for bubbles.
- * 15) Close button placement: decide between sticky top-right inside dialog vs overlaying the launcher. Ensure it never scrolls out of view; test z-index, hit area ≥44px, and focus-visible.
+ * TODO ChatAI widget CSS
+ *
+ * Implemented (leave here as reference):
+ * - Focus states: visible :focus-visible rings for toggle, inputs, buttons, and links.
+ * - Reduced motion: dialog transitions shortened and typing animation disabled on prefers-reduced-motion.
+ * - High-contrast tokens: added --chat-accent-contrast, --chat-warning-bg, --chat-warning-fg.
+ * - RTL support: basic alignment flip for .chatbot-msg.user/.bot under [dir="rtl"].
+ * - Typography scale: clamp() font size on .chatbot-messages and text-wrap: pretty.
+ * - Link styling: explicit :hover and :focus-visible states for links inside messages.
+ * - Code styling: inline <code> inside messages.
+ * - Scroll behavior: overscroll-behavior: contain and a single scrollable wrapper for messages.
+ * - Warning colour: warning bubble now uses dedicated bg/fg tokens.
+ * - Mobile spacing: minor inset/padding tweaks at <= 480px; tap targets kept comfortable.
+ * - Print styles: hide toggle and dialog in print views.
+ *
+ * Backlog / nice-to-haves:
+ * 1) Container queries: size dialog via @container where supported instead of viewport width only.
+ * 2) Remaining-messages badge: small unobtrusive counter in header; aria-live="polite"; only visible when close to the limit.
+ * 3) Reply colour tokens: separate message bubble colours from button colours; introduce --chat-reply-bg/fg or similar.
+ * 4) Close button placement: final decision and tests for sticky top-right behaviour, hit area >= 44px, and interaction with launcher.
+ * 5) Footer styling: refine layout and spacing for disclaimer + “talk to a human” / “book” links; consider mobile-specific tweaks and per-site variants.
+ * 6) File upload affordance (future feature): visual design and focus/hover states for an attach button once backend support is in place.
  */
+

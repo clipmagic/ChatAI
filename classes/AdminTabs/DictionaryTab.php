@@ -38,7 +38,7 @@ class DictionaryTab
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'custom_terms');
         $f->label($m->_('Custom terms'));
-        $f->notes("Phrases relevant to site content.\nOne phrase per line.\nMay be weighted, eg term|2.0");
+        $f->notes($m->_("Phrases relevant to site content.\nOne phrase per line.\nMay be weighted, eg term|2.0"));
         $value = $data['custom_terms'] ?? '';
         $f->attr('value', $value);
         $f->stripTags = true;
@@ -55,8 +55,8 @@ class DictionaryTab
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'stop_terms_hard');
         $f->label($m->_('Hard stop noise words'));
-        $f->notes("Phrases the bot should ignore\nComma separated.");
-        $value = $data['stop_terms_hard'] ?? 'the, a, an, of, for, to, in, on, at, by, with, from, and, or, but,about, info, information, details, stuff, things, something, anything,hi, hello, hey, please, thanks, thank you, cheers, ok, okay,etc, misc, n/a, tba, tbc';
+        $f->notes($m->_("Phrases the bot should ignore\nComma separated."));
+        $value = $data['stop_terms_hard'] ?? $m->_('the, a, an, of, for, to, in, on, at, by, with, from, and, or, but,about, info, information, details, stuff, things, something, anything,hi, hello, hey, please, thanks, thank you, cheers, ok, okay,etc, misc, n/a, tba, tbc');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -67,8 +67,8 @@ class DictionaryTab
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'stop_terms_soft');
         $f->label($m->_('Soft stop noise words'));
-        $f->notes("Phrases the bot should give less weight but not drop\nComma separated.");
-        $value = $data['stop_terms_soft'] ?? 'services, products, solutions, resources, articles, blog, page, section, today, now, latest, recent, get, have, make, do, provide, offer, use, help, support, can, could, would';
+        $f->notes($m->_("Phrases the bot should give less weight but not drop\nComma separated."));
+        $value = $data['stop_terms_soft'] ?? $m->_('services, products, solutions, resources, articles, blog, page, section, today, now, latest, recent, get, have, make, do, provide, offer, use, help, support, can, could, would');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -84,7 +84,7 @@ class DictionaryTab
         $f->attr('name+id', 'smalltalk_triggers');
         $f->label($m->_('Triggers'));
         $f->notes("Irrelevant chit chat\nComma separated.");
-        $value = $data['smalltalk_triggers'] ?? 'hi, hello, hey, ok, thanks, salut';
+        $value = $data['smalltalk_triggers'] ?? $m->_('hi, hello, hey, ok, thanks, salut');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -94,7 +94,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'smalltalk_reply');
         $f->label($m->_('Reply'));
-        $value = $data['smalltalk_reply'] ?? 'Hello. How can I help?';
+        $value = $data['smalltalk_reply'] ?? $m->_('Tell me what you’d like to learn about and I’ll find the most relevant pages.');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -112,7 +112,7 @@ class DictionaryTab
         $f->attr('name+id', 'meta_terms');
         $f->label($m->_('Triggers'));
         $value = $data['meta_terms'] ?? 'api, api key, aws, billing, bug, cache, cdn, cloudflare, console, cookie, crash, css, ddev, error, gcp, git, github, html, javascript, latency, login, logout, mail, mailpit, model, module, php, pricing, processwire, prompt, rate limit, refresh, reload, selector, session, smtp, stack trace, stripe, subscription, template, timeout, token, upgrade, version, webhook';
-        $f->notes("IT related terms\nComma separated.");
+        $f->notes($m->_("IT related terms\nComma separated."));
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -122,7 +122,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'meta_reply');
         $f->label($m->_('Reply'));
-        $value = $data['meta_reply'] ?? "I can help with pages and information on this site. Ask me what you’re looking for.";
+        $value = $data['meta_reply'] ?? $m->_("I can help with pages and information on this site. Ask me what you’re looking for.");
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -140,7 +140,7 @@ class DictionaryTab
         $f->attr('name+id', 'action_verbs');
         $f->label($m->_('Triggers'));
         $f->notes("Comma separated.");
-        $value = $data['action_verbs'] ?? 'switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove';
+        $value = $data['action_verbs'] ?? $m->_('switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -150,7 +150,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'action_reply');
         $f->label($m->_('Reply'));
-        $value = $data['action_reply'] ?? "Sure. Tell me what you'd like me to do with the site content.";
+        $value = $data['action_reply'] ?? $m->_("Sure. Tell me what you'd like me to do with the site content.");
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -169,7 +169,7 @@ class DictionaryTab
         $f->attr('name+id', 'followup_terms');
         $f->label($m->_('Triggers'));
         $f->notes("Comma separated.");
-        $value = $data['followup_terms'] ?? 'this, that, those, the second one, more, details, expand, …, ...';
+        $value = $data['followup_terms'] ?? $m->_('this, that, those, the second one, more, details, expand, …, ...');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -179,7 +179,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'followup_reply');
         $f->label($m->_('Reply'));
-        $value = $data['followup_reply'] ?? "Which page or section should I expand on?";
+        $value = $data['followup_reply'] ?? $m->_("What information should I expand on?");
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -196,7 +196,7 @@ class DictionaryTab
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'question_words');
         $f->label($m->_('Triggers'));
-        $value = $data['question_words'] ?? 'what, when, where, who, why, how, which';
+        $value = $data['question_words'] ?? $m->_('what, when, where, who, why, how, which');
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -213,7 +213,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'no_context_reply');
         $f->label($m->_('Reply'));
-        $value = $data['no_context_reply'] ?? "Tell me what you’re looking for and I’ll point you to the right page.";
+        $value = $data['no_context_reply'] ?? $m->_("Tell me what you’re looking for and I’ll point you in the right direction.");
         $f->attr('value', $value);
         $f->stripTags = true;
         $f->useLanguages = true;

@@ -322,16 +322,14 @@ class ProcessChatAI extends Process
                 $values['rag_exclude_templates'] = $this->chatai->asmToIds($values['rag_exclude_templates'] ?? []);
 
                 $this->_promptMemo = $values;
-                bd($this->_promptMemo);
 
                 $this->savePromptSettingsJson(json_encode($this->_promptMemo));
-                // delete old index version from cache
-                $oldVer = $cfg['index_version'];
-                $this->wire('cache')->deleteFor('chatai', "dict:v{$oldVer}:all");
 
-                // save new index version to cache
-//                $newVer = $values['index_version'];
-//                $this->wire('cache')->saveFor('chatai', "dict:v{$newVer}:all", $values);
+                // delete old index version from cache if it exists
+                if(isset($cfg['index_version'])) {
+                    $oldVer = $cfg['index_version'];
+                    $this->wire('cache')->deleteFor('chatai', "dict:v{$oldVer}:all");
+                }
 
             } else {
 //                $errors = $form->getErrors(); // array of error messages…
@@ -435,6 +433,7 @@ class ProcessChatAI extends Process
 
     protected function buildPrompt(): string {
         $session = $this->wire('session');
+        //$cfg = $this->_loadPromptSettings();
         if(empty($this['values'])) {
             $session->warning($this->_('Please save before proceeding.'));
            return '';
@@ -492,11 +491,15 @@ class ProcessChatAI extends Process
         if(!empty($botname)) {
             $prompt .= "You are {$botname}";
                 if (!empty($botrole)) {
-                    $prompt .= ", a {$botrole}";
+                    $prompt .= ", {$botrole}";
                     if (!empty($bizname))
                         $prompt .= " for {$bizname}";
                 }
             $prompt .= ".\n";
+        }
+
+        if(!empty($autohint)) {
+            $prompt .= "\n{$autohint}";
         }
 
         // 1. Language detections
@@ -551,10 +554,8 @@ class ProcessChatAI extends Process
         $prompt .= "\n- Only validate coverage when the user’s request is complex or multi-part.";
         $prompt .= "\n- Do not state “this covers your greeting” or similar for simple greetings or small talk.";
         $prompt .= "\n- Except when it is a greeting or small talk, if no site context is provided for the current question, reply briefly that no relevant on‑site pages were found, then ask one specific clarifying question. Offer exactly one self‑check tip. Do not mention browsing or technical limitations.";
+        $prompt  .= "\nIf you asked a clarifying question, interpret short replies such as {$followup_terms}, or a page title as answers to that question.";
 
-        if(!empty($autohint)) {
-            $prompt .= "\n{$autohint}";
-        }
         $prompt .= "\n";
         return $prompt;
     }
@@ -597,6 +598,26 @@ class ProcessChatAI extends Process
         return $this->getLanguageVal('submit_text');
     }
 
+    public function getResetText (): string
+    {
+        return $this->getLanguageVal('reset_text');
+    }
+
+    public function getThinkingText (): string
+    {
+        return $this->getLanguageVal('thinking_text');
+    }
+
+    public function getDisclaimerText (): string
+    {
+        return $this->getLanguageVal('disclaimer_text');
+    }
+
+    public function getFooterText (): string
+    {
+        return $this->getLanguageVal('footer_text');
+    }
+
     public function getBotName (): string
     {
         return $this->getLanguageVal('botname');
@@ -609,30 +630,44 @@ class ProcessChatAI extends Process
         $intro = $this->getIntro();
         $placeholder = $this->getPlaceholder();
         $submitText = $this->getButtonText();
-        $widgetFile =  $files->render($path, ['intro' => $intro, 'placeholder'=>$placeholder, 'button_text'=>$submitText]);
+        $resetText = $this->getResetText();
+        $thinkingText = $this->getThinkingText();
+        $disclaimerText = $this->getDisclaimerText();
+        $footerText = $this->getFooterText();
+        $widgetFile =  $files->render($path, [
+            'intro' => $intro,
+            'placeholder'=>$placeholder,
+            'button_text'=>$submitText,
+            'reset_text'=>$resetText,
+            'thinking_text'=>$thinkingText,
+            'disclaimer_text'=>$disclaimerText,
+            'footer_text'=>$footerText
+        ]);
         return $widgetFile;
     }
 
-    public function isBlacklisted($message) : bool
+
+
+    public function isBlacklistTerm($message) : bool
     {
         $sanitizer = $this->wire('sanitizer');
         $message = $sanitizer->text($message);
-        if(empty($this['values']))
-            $this['values'] = $this->loadPromptSettings();
-        $blacklisted = false;
-        if($this['values']['use_blacklist'] !== 1) return $blacklisted;
+        $cfg = $this->loadPromptSettings();
 
-        if (!empty($this['values']['blacklist'])) {
-            $blacklist = explode(',', $this['values']['blacklist']);
+        $blacklistTerm = false;
+        if(!isset($cfg['use_blacklist'])) return $blacklistTerm;
+
+        if (!empty($cfg['blacklist'])) {
+            $blacklist = explode(',', $cfg['blacklist']);
             foreach ($blacklist as $term) {
                 $term = $sanitizer->text($term);
                 if ($term && stripos($message, $term) !== false) {
-                    $blacklisted = true;
+                    $blacklistTerm = true;
                     break;
                 }
             }
         }
-        return $blacklisted;
+        return $blacklistTerm;
     }
 
 
@@ -692,7 +727,6 @@ class ProcessChatAI extends Process
 
         // Broad candidate scan — you may narrow by templates/parents in RAG::shouldIndexPage
 
-        bd($cfg, 'process 674');
 
         $selector = "has_parent!=2, status!=trash, id!=$http404, template!=http404, include=hidden";
         $total = $pages->count($selector);
@@ -755,7 +789,7 @@ class ProcessChatAI extends Process
         $indexer->setWire($this->wire());
         //$pages = $this->wire('pages')->findMany('has_parent!=2, include=visible, template!=admin');
         $pages = $this->wire('pages')->findMany('has_parent!=2, template!=admin');
-bd($pages);
+
 
         $languages = $this->wire('languages');
         $langIds = ($languages && $languages->count())
