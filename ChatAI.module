@@ -25,7 +25,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     {
         if (empty($this->api_key)) $this->warning('OpenAI API key missing; ChatAI may not function.');
 
-
         // Load helpers
         require_once __DIR__ . '/classes/Indexing/IndexContentExtractor.php';
         require_once __DIR__ . '/classes/Indexing/ChatAIIndexer.php';
@@ -72,6 +71,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'gpt-5' => 'gpt-5',
             'gpt-5.1' => 'gpt-5.1'
         ]);
+
         $f->value = $data['model'] ?? 'gpt-5-mini';
         $fieldset->add($f);
 
