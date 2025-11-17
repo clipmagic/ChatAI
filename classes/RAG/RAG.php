@@ -299,6 +299,44 @@ class RAG extends Wire {
      * FULLTEXT prefilter (per lang), cosine rerank.
      * $prefilter bounds the initial candidate count – tune for your content size.
      */
+//    public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
+//        $db = $this->wire('database');
+//        $qVec = $this->embedText($query);
+//
+//        try {
+//            $stmt = $db->prepare(
+//                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+//                   FROM `" . self::CHATAI_VEC_TABLE . "`
+//                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+//                  LIMIT ?"
+//            );
+//            $stmt->execute([$userLangId, $query, $prefilter]);
+//            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+//        } catch (\Throwable $e) {
+//            $rows = [];
+//        }
+//
+//        if (!$rows) {
+//            $stmt2 = $db->prepare(
+//                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+//                   FROM `" . self::CHATAI_VEC_TABLE . "`
+//                  WHERE lang_id=?
+//                  LIMIT 200"
+//            );
+//            $stmt2->execute([$userLangId]);
+//            $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+//        }
+//
+//        $scored = [];
+//        foreach ($rows as $r) {
+//            $vec = $this->unpackCsv($r['embedding_csv']);
+//            $r['score'] = $this->cosine($qVec, $vec);
+//            $scored[] = $r;
+//        }
+//        usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
+//        return array_slice($scored, 0, $k);
+//    }
+
     public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
         $db = $this->wire('database');
         $qVec = $this->embedText($query);
@@ -306,9 +344,9 @@ class RAG extends Wire {
         try {
             $stmt = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
-                  LIMIT ?"
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+             LIMIT ?"
             );
             $stmt->execute([$userLangId, $query, $prefilter]);
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
@@ -319,14 +357,15 @@ class RAG extends Wire {
         if (!$rows) {
             $stmt2 = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=?
-                  LIMIT 200"
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=?
+             LIMIT 200"
             );
             $stmt2->execute([$userLangId]);
             $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         }
 
+        // Score all candidate chunks
         $scored = [];
         foreach ($rows as $r) {
             $vec = $this->unpackCsv($r['embedding_csv']);
@@ -334,8 +373,30 @@ class RAG extends Wire {
             $scored[] = $r;
         }
         usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
-        return array_slice($scored, 0, $k);
+
+        // --- NEW: collapse to unique pages (keep best chunk per page) ---
+        $byPage = [];
+        foreach ($scored as $row) {
+            $pid = (int)$row['page_id'];
+            // skip unusable entries
+            if (empty($row['source_url'])) continue;
+            if (!isset($byPage[$pid]) || $row['score'] > $byPage[$pid]['score']) {
+                // Optional: trim snippet to the first clean sentence
+                //$row['snippet'] = $this->firstSentence($row['text'] ?? '');
+                $byPage[$pid] = $row;
+            }
+            if (count($byPage) >= ($k * 2)) {
+                // small guard so we don’t store too many before the final slice
+                // (keeps memory modest if $prefilter is large)
+            }
+        }
+
+        // Sort the representative chunks by score and take top K pages
+        $uniq = array_values($byPage);
+        usort($uniq, fn($a,$b) => $b['score'] <=> $a['score']);
+        return array_slice($uniq, 0, $k);
     }
+
 
     /** Build a compact context string from chunks (bounded by $maxChars). */
     public function buildContextFromChunks(array $chunks, int $maxChars = 2400): string {
@@ -353,7 +414,7 @@ class RAG extends Wire {
      * Construct messages with the built context and call your existing ChatAI chat method.
      */
 
-    public function answerWithRAG(string $userText, ?int $userLangId = null): string {
+/*    public function answerWithRAG(string $userText, ?int $userLangId = null): string {
         // resolve current language id
         if ($userLangId === null) {
             $languages = $this->wire('languages');
@@ -407,7 +468,7 @@ class RAG extends Wire {
 
         // ultimate fallback
         return (string) ($cfg['no_context_reply'] ?? 'How can I help with the site content?');
-    }
+    }*/
 
     // fetch cfg value by language: key__{langId} → key → ''
     protected function cfgLang(string $key, array $cfg, int $langId): string {

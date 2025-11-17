@@ -16,14 +16,20 @@ class ChatAIIndexer extends Wire
     public function buildForPage(Page $page, int $langId): array
     {
         $files = $this->wire('files');
-        $cfg   = $this->wire('modules')->get('ProcessChatAI')->loadPromptSettings();
+        $config = $this->wire('config');
 
-        $ragViewPath =  $this->wire('config')->paths('ChatAI') . 'classes/RAG/';
-        $view  = !empty($cfg['rag_view']) ? $cfg['rag_view'] :  $ragViewPath . 'chatai-rag.php';
+        if($files->exists($config->paths->templates . 'chatai-rag.php')) {
+            $html = $files->render('chatai-rag.php', ['page' => $page]);
+        } else {
+            $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
+            $view =  $ragViewPath . 'chatai-rag.php';
+            $html = $files->render($view, ['page' => $page], ['allowedPaths', $ragViewPath]);
+        }
 
+        $tt = new WireTextTools();
         $content = [];
-        $html = $files->render($view, ['page' => $page], ['allowedPaths', $ragViewPath]);
-        $content['text'] = $this->wire('modules')->get('ChatAI')->rag->toPlainText($html);
+        //$content['text'] = $this->wire('modules')->get('ChatAI')->rag->toPlainText($html);
+        $content['text'] = $tt->markupToText($html);
         $content['heads'] = $this->getPageHeadings($page, $langId);
         $content['slug']  = $page->name;
 
