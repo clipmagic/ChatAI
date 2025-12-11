@@ -142,26 +142,6 @@ class ProcessChatAI extends Process
 
     //*** Hooks ***//
 
- /*   public function hookPageSaved(HookEvent $event) {
-        $page = $event->arguments(0);
-        $chatai = $this->wire('modules')->get('ChatAI');
-        $cfg = $this->loadPromptSettings();
-        if(!$page->id || !$chatai->validTemplate($page, $cfg) || $cfg['chunk_on_save'] !== 1) return;
-
-        $rag = new RAG();
-        $return = $event->return;
-        $languages = $this->wire('languages');
-        if($languages && $languages->count()) {
-            foreach($languages as $lang) {
-                $rag->collectPageText($page, $cfg);
-            }
-        } else {
-            $rag->collectPageText($page, $cfg);
-        }
-        $event->return = $return;
-    }*/
-
-
     public function hookModuleSaved(HookEvent $event) {
         $module = $event->arguments(0);
         if(!$module instanceof self) return;
@@ -255,8 +235,237 @@ class ProcessChatAI extends Process
         return $output;
     }
 
+    protected function renderVolumeDataJson(): string
+    {
+        $input = $this->wire('input');
+
+        $days = (int) $input->get('days') ?: 7;
+        $days = max(1, min($days, 30)); // clamp to 1–30
+
+        $labels = [];
+        $totals = [];
+
+        $chatAI = $this->wire('modules')->get('ChatAI');
+        if ($chatAI && method_exists($chatAI, 'getObsLog')) {
+            $logger = $chatAI->getObsLog();
+            if ($logger && method_exists($logger, 'fetchDailyVolume')) {
+                $rows = $logger->fetchDailyVolume($days);
+                foreach ($rows as $row) {
+                    $labels[] = (string) ($row['date'] ?? '');
+                    $totals[] = (int) ($row['total'] ?? 0);
+                }
+            }
+        }
+
+        return json_encode([
+            'labels' => $labels,
+            'totals' => $totals,
+        ]);
+    }
+
+    protected function renderInsightsJson(): string
+    {
+        $input = $this->wire('input');
+        $days  = (int) $input->get('days') ?: 7;
+        $days  = max(1, min($days, 60));
+
+        $chatAI = $this->wire('modules')->get('ChatAI');
+        if (!$chatAI || !method_exists($chatAI, 'getObsLog')) {
+            return json_encode([
+                'html' => '<p class="chatai-dashboard-muted">' .
+                    $this->_('Insights are not available.') .
+                    '</p>',
+            ]);
+        }
+
+        $logger = $chatAI->getObsLog();
+        if (!method_exists($logger, 'buildInsightsSnapshot')) {
+            return json_encode([
+                'html' => '<p class="chatai-dashboard-muted">' .
+                    $this->_('Insights are not available.') .
+                    '</p>',
+            ]);
+        }
+
+        // Build snapshot for the selected range
+        $snapshot = $logger->buildInsightsSnapshot($days);
+
+        if (!$snapshot || empty($snapshot['total_events'])) {
+            return json_encode([
+                'html' => '<p class="chatai-dashboard-muted">' .
+                    $this->_('No recent activity to analyse for the selected period.') .
+                    '</p>',
+            ]);
+        }
+
+        // Normalise a couple of fields for the heuristic function and summary
+        $snapshot['range_days'] = (int) ($snapshot['range_days'] ?? $days);
+
+        $san  = $this->wire('sanitizer');
+        $tips = $logger->buildHeuristicInsights($snapshot);
+
+        $periodDays   = (int) ($snapshot['range_days'] ?? $snapshot['period_days'] ?? $days);
+        $totalEvents  = (int) ($snapshot['total_events'] ?? 0);
+        $successLabel = isset($snapshot['success_rate'])
+            ? ((int) round($snapshot['success_rate'] * 100)) . '%'
+            : $this->_('n/a');
+        $latencyLabel = isset($snapshot['avg_latency_ms'])
+            ? ((int) $snapshot['avg_latency_ms']) . ' ms'
+            : $this->_('n/a');
+
+        $html  = '<p class="chatai-dashboard-muted">';
+        $html .= sprintf(
+            $this->_('Last %d days. Total events: %d. Success rate: %s. Average latency: %s.'),
+            $periodDays,
+            $totalEvents,
+            $successLabel,
+            $latencyLabel
+        );
+        $html .= '</p>';
+
+        if ($tips) {
+            $html .= '<ul class="chatai-dashboard-list">';
+            foreach ($tips as $tip) {
+                $html .= '<li>' . $san->entities($tip) . '</li>';
+            }
+            $html .= '</ul>';
+        } else {
+            $html .= '<p class="chatai-dashboard-muted">' .
+                $this->_('No obvious issues detected.') .
+                '</p>';
+        }
+
+        return json_encode(['html' => $html]);
+    }
+
+    protected function renderObslogCsv(): void {
+        $input   = $this->wire('input');
+        $modules = $this->wire('modules');
+
+        $days = (int) $input->get('days') ?: 7;
+        $days = max(1, min($days, 60));
+
+        $chatAI = $modules->get('ChatAI');
+        if (!$chatAI || !method_exists($chatAI, 'getObsLog')) {
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "Observability log is not available.";
+            return;
+        }
+
+        $logger = $chatAI->getObsLog();
+        if (!$logger || !method_exists($logger, 'fetchRange')) {
+            header('Content-Type: text/plain; charset=utf-8');
+            echo "Observability export is not available.";
+            return;
+        }
+
+        $to   = new \DateTime(); // now
+        $from = (clone $to)->modify("-{$days} days");
+
+        $rows = $logger->fetchRange($from, $to);
+
+        $filename = sprintf(
+            'chatai_obslog_last_%dd_%s.csv',
+            $days,
+            date('Ymd_His')
+        );
+
+        header('Content-Type: text/csv; charset=utf-8');
+        header('Content-Disposition: attachment; filename="' . $filename . '"');
+        header('Pragma: no-cache');
+        header('Expires: 0');
+
+        $out = fopen('php://output', 'w');
+        if (!$out) {
+            echo "Failed to open output stream.";
+            return;
+        }
+
+        // 1) Discover all meta keys across this result set
+        $metaKeys = [];
+        foreach ($rows as $row) {
+            if (empty($row['meta'])) continue;
+            $decoded = json_decode($row['meta'], true);
+            if (!is_array($decoded)) continue;
+            foreach ($decoded as $k => $v) {
+                if (!array_key_exists($k, $metaKeys)) {
+                    $metaKeys[$k] = true;
+                }
+            }
+        }
+        $metaKeys = array_keys($metaKeys);
+        sort($metaKeys); // stable ordering
+
+        // 2) Write header row: base columns + meta columns
+        $baseHeader = ['id', 'created', 'chat_id', 'event_type', 'status', 'model'];
+        $header     = array_merge($baseHeader, $metaKeys);
+        fputcsv($out, $header);
+
+        // 3) Write each row, flattening meta into columns
+        foreach ($rows as $row) {
+            $meta = [];
+            if (!empty($row['meta'])) {
+                $decoded = json_decode($row['meta'], true);
+                if (is_array($decoded)) {
+                    $meta = $decoded;
+                }
+            }
+
+            $line = [
+                $row['id'],
+                $row['created'],
+                $row['chat_id'],
+                $row['event_type'],
+                $row['status'],
+                $row['model'],
+            ];
+
+            foreach ($metaKeys as $k) {
+                $val = $meta[$k] ?? '';
+
+                if (is_bool($val)) {
+                    $val = $val ? '1' : '0';
+                } elseif (is_array($val)) {
+                    // Nested structures should be rare; encode them as JSON
+                    $val = json_encode($val, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                }
+
+                $line[] = $val;
+            }
+
+            fputcsv($out, $line);
+        }
+
+        fclose($out);
+    }
+
+
     public function ___execute()
     {
+        $input  = $this->wire('input');
+        $config = $this->wire('config');
+
+        $api = $input->get->text('api');
+
+        if ($api === 'volumeData') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo $this->renderVolumeDataJson();
+            exit;
+        }
+
+        if ($api === 'insights') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo $this->renderInsightsJson();
+            exit;
+        }
+
+        if ($api === 'obslogExport') {
+            $this->renderObslogCsv();
+            exit;
+        }
+
+
+
         $this->wire('modules')->get('JqueryWireTabs');
         $tabView = [];
 
@@ -265,6 +474,9 @@ class ProcessChatAI extends Process
 
         $this->config->styles->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.css');
         $this->config->scripts->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.js');
+        // Chart.js from CDN (simple and proven)
+        $this->config->scripts->add('https://cdn.jsdelivr.net/npm/chart.js');
+
 
         $this->values = $this->loadPromptSettings();
 

@@ -23,12 +23,11 @@ class ChatAIIndexer extends Wire
         } else {
             $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
             $view =  $ragViewPath . 'chatai-rag.php';
-            $html = $files->render($view, ['page' => $page], ['allowedPaths', $ragViewPath]);
+            $html = $files->render($view, ['page' => $page], ['allowedPaths', [$ragViewPath]]);
         }
 
         $tt = new WireTextTools();
         $content = [];
-        //$content['text'] = $this->wire('modules')->get('ChatAI')->rag->toPlainText($html);
         $content['text'] = $tt->markupToText($html);
         $content['heads'] = $this->getPageHeadings($page, $langId);
         $content['slug']  = $page->name;

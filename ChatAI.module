@@ -15,6 +15,17 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     const modName = 'ChatAI';
 
+    /** @var \ProcessWire\RAG */
+    protected $rag;
+
+    /** @var \ProcessWire\ChatAIIndexer */
+    protected $indexer;
+
+    /** @var \ProcessWire\Classifier */
+    protected $classifier;
+
+    /** @var \ProcessWire\ChatAIObsLog */
+    protected $logger;
 
     public function construct()
     {
@@ -30,6 +41,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         require_once __DIR__ . '/classes/Indexing/ChatAIIndexer.php';
         require_once __DIR__ . '/classes/RAG/RAG.php';
         require_once __DIR__ . '/classes/Classifier.php';
+        require_once __DIR__ . '/classes/ChatAIObsLog.php';
 
         // Shared services
         $this->rag = new \ProcessWire\RAG();
@@ -41,9 +53,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $this->classifier = new \ProcessWire\Classifier();
         $this->classifier->setWire($this->wire());
 
+        $this->logger = new \ProcessWire\ChatAIObsLog();
+        $this->logger->setWire($this->wire());
     }
 
-    public function getModuleConfigInputfields(array $data)
+    public function getModuleConfigInputfields(array $data) : InputfieldWrapper
     {
         $modules = wire('modules');
         $inputfields = new InputfieldWrapper();
@@ -224,7 +238,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $js;
     }
 
-    public function isMessageAllowed($message) : stdClass {
+/*    public function isMessageAllowed($message) : stdClass {
         $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $session = $this->wire('session');
         $output = new stdClass();
@@ -252,6 +266,25 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $output->stop = true;
             $output->blacklistTerm = true;
             $err = $this->getErrorMessage(13);
+            // Log hard blacklist event with IP
+            try {
+                $ip   = (string) $this->wire('input')->ip;
+                $ph   = $this->previewAndHash((string) $msg);
+                $meta = [
+                    'event'            => 'blocked',
+                    'ip'               => $ip,
+                    'ip_hash'          => hash('sha256', $ip),
+                    'reason'           => 'blacklist',
+                    'lang_id'          => (int) ($langId ?? 0),
+                    'user_msg_preview' => $ph['preview'],
+                    'user_msg_hash'    => $ph['hash'],
+                ];
+
+                // minimal result payload for logger
+                $this->obsLog(['ok' => false, 'error' => 'blacklist'], $meta);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai-obslog', $e->getMessage());
+            }
         } else {
             $session->setFor('chatai', 'blacklist_strikes', $strikes);
             $output->stop = false;
@@ -262,7 +295,83 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $output->reply = $err->msg;
 
         return $output;
+    }*/
+
+    public function isMessageAllowed($message) : \stdClass {
+        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+        $session     = $this->wire('session');
+
+        $output = new \stdClass(); // optional: fully qualify
+        $output->name        = $chatProcess->getBotName();
+        $output->blacklisted = false;
+        $output->stop        = false;
+        $output->error       = null;
+        $output->reply       = null;
+        $output->html        = null;
+
+        // Optional: resolve lang ID once for logging
+        // so you do not depend on an external $langId variable.
+        $langId = (int) ($this->wire('user')->language->id ?? 0);
+
+        // Check message is not empty. Fallback from HTML check
+        if ($message === '') {
+            $output->error = $this->getErrorMessage(2);
+            return $output;
+        }
+
+        // blacklist check
+        $blacklistTerm = $chatProcess->isBlacklistTerm($message);
+        if (!$blacklistTerm) {
+            return $output;
+        }
+
+        $strikes = (int) ($session->getFor('chatai', 'blacklist_strikes') ?? 0) + 1;
+        $session->setFor('chatai', 'blacklist_strikes', $strikes);
+
+        if ($strikes && $strikes >= $this->max_strikes) {
+            $output->stop          = true;
+            $output->blacklistTerm = true;       // optional: also set $output->blacklisted = true;
+            $output->blacklisted   = true;
+            $err = $this->getErrorMessage(13);
+
+            // Log hard blacklist event with IP
+            try {
+                $ip = (string) $this->wire('input')->ip;
+
+                // BUGFIX: use $message here, not $msg
+                $ph = $this->previewAndHash((string) $message);
+
+                $meta = [
+                    'event'            => 'blocked',
+                    'ip'               => $ip,
+                    'ip_hash'          => hash('sha256', $ip),
+                    'reason'           => 'blacklist',
+                    'lang_id'          => $langId,
+                    'user_msg_preview' => $ph['preview'],
+                    'user_msg_hash'    => $ph['hash'],
+                ];
+
+                // minimal result payload for logger
+                $this->obsLog(['ok' => false, 'error' => 'blacklist'], $meta);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai-obslog', $e->getMessage());
+            }
+
+        } else {
+            // This second setFor() was redundant. Strikes already stored above.
+            // $session->setFor('chatai', 'blacklist_strikes', $strikes);
+
+            $output->stop = false;
+            $err = $this->getErrorMessage(14, $strikes, $this->max_strikes);
+        }
+
+        $output->error = $err;
+        $output->reply = $err->msg;
+
+        return $output;
     }
+
+
 
     private function buildPostData(string $model, array $messages): \stdClass {
         $p = new \stdClass();
@@ -348,8 +457,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             if (!empty($payload['reasoning_effort'])) $body['reasoning'] = ['effort' => (string)$payload['reasoning_effort']];
             // drop verbosity (not public)
 
-            return [$endpoint, $body];
+
         }
+        return [$endpoint, $body];
     }
 
     public function callModelForText(array $messagesForApi): \stdClass {
@@ -375,8 +485,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 return $o;
             }
             $data = json_decode($response, true);
-bd($data);
-            $this->obsLog($data);
 
             if (!is_array($data)) {
                 $this->wire('log')->save('chatai', 'OpenAI: unexpected non-JSON response');
@@ -607,7 +715,6 @@ bd($data);
             // After the API call
             $messages = $chatProcess->beforeSend($messages);
             $m = $this->callModelForText($messages);
-            bd($m, 'm');
             // Normalize to object
             if (is_string($m)) {
                 $decoded = json_decode($m, false);          // decode as object
@@ -626,24 +733,24 @@ bd($data);
                 $result->error  = $this->getErrorMessage(20);
             }
 
-
-
-
             // Common context
             $ph = $this->previewAndHash((string) $msg);
+            $event = !empty($result->cutoff) ? 'cutoff' : 'reply';
+
             $meta = [
-                'latency_ms' => (int) round((microtime(true) - $started) * 1000),
-                'count'      => (int) $this->wire('session')->getFor('chatai', 'count'),
-                'remaining'  => null,     // fill once computed
-                'stop'       => false,    // fill once set
-                'lang_id'    => (int) ($langId ?? 0),   // use your resolved $langId, not $data['lang']
-                'model'      => (string) $this->model,
-                'endpoint'   => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
-                // for privacy, store only a preview + hash, not full text
-                'user_msg'           => $ph['preview'],
-                'user_msg_preview'   => $ph['preview'],
-                'user_msg_hash'      => $ph['hash'],
+                'event'            => $event,
+                'latency_ms'       => (int) round((microtime(true) - $started) * 1000),
+                'count'            => (int) $this->wire('session')->getFor('chatai', 'count'),
+                'remaining'        => null,
+                'stop'             => false,
+                'lang_id'          => (int) ($userLangId ?? 0),
+                'model'            => (string) $this->model,
+                'endpoint'         => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
+                'cutoff'           => !empty($result->cutoff),
+                'user_msg_preview' => $ph['preview'],
+                'user_msg_hash'    => $ph['hash'],
             ];
+
 
             if (!$m->ok) {
                 $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
@@ -651,28 +758,24 @@ bd($data);
             } else {
                 // Limit check
                 $this->enforceMessageLimit($result);
-
-                // ... your existing success handling, then:
-//                $after     = $this->msgCountInc();
-//                $remaining = $this->msgRemaining($after);
-//                $result->stop = ($remaining === 0);
-//
-//                $meta['remaining']  = $remaining;
                 $meta['stop']       = (bool)$result->stop;
                 $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
                 $this->obsLog($m, $meta);
             }
-
         } catch (\Throwable $e) {
             $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
             $m = (object)['ok' => false, 'error' => 'exception'];
+
+            // Ensure meta exists so later code does not see an undefined variable
+            if (!isset($meta)) {
+                $meta = [];
+            }
         }
+
 
         // Interpret
         if (!$m->ok) {
             $code = !empty($m->error) ? (string)$m->error : 'unknown';
-            // log metrics
-            $this->obsLog($m, $meta);
 
             // Normalize provider “too busy / quota / throttled” signals to case 15
             if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
@@ -686,18 +789,6 @@ bd($data);
             $result->stop  = true;                          // or false, if you want retries
             return $result;
         }
-
-        // Model returned success in $m->text
-
-//        $this->enforceMessageLimit($result);
-//        $after     = $this->msgCountInc();
-//        $remaining = $this->msgRemaining($after);
-//        $result->stop = ($remaining === 0);
-//
-//        $meta['remaining']  = $remaining;
-        $meta['stop']       = (bool)$result->stop;
-        $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-        $this->obsLog($m, $meta);
 
         $raw = (string) $m->text; // expected HTML fragment per your prompt
 
@@ -757,9 +848,15 @@ bd($data);
         return null; // under limit
     }
 
+    public function getObsLog(): \ProcessWire\ChatAIObsLog
+    {
+        return $this->logger;
+    }
+
+
 
     // logs one compact JSON line
-    protected function obsLog($result, array $meta = []): void {
+ /*   protected function obsLog($result, array $meta = []): void {
         // config + sampling
         $cfg = $this->wire('modules')->get('ProcessChatAI')->loadPromptSettings();
         if (empty($cfg['obs_enabled'])) return;
@@ -807,7 +904,89 @@ bd($data);
             @rename($file, $file . '.' . date('Ymd-His'));
         }
         file_put_contents($file, json_encode($out, JSON_UNESCAPED_SLASHES) . PHP_EOL, FILE_APPEND | LOCK_EX);
+    }*/
+
+
+    // logs one compact event to chatai_obslog
+    protected function obsLog($result, array $meta = []): void
+    {
+        // 1) Config + sampling
+        $process = $this->wire('modules')->get('ProcessChatAI');
+        $cfg     = $process->loadPromptSettings();
+
+        if (empty($cfg['obs_enabled'])) return;
+
+        $sr = max(1, (int)($cfg['obs_sample_rate'] ?? 1));
+        if (mt_rand(1, $sr) !== 1) return;
+
+        // 2) Normalise result to array
+        if (is_object($result)) {
+            $result = json_decode(json_encode($result), true);
+        }
+        $result = is_array($result) ? $result : [];
+
+        // 3) Build core payload
+        $ok      = (bool)($result['ok'] ?? false);
+        $errCode = $result['error'] ?? null;
+
+        // Ignore empty, non-informative calls (no meta, no ok flag, no error)
+        if (!$ok && $errCode === null && empty($meta)) {
+            return;
+        }
+
+        $out = [
+            't'        => date('c'),
+            'event'    => $meta['event'] ?? 'reply',
+            'ok'       => $ok,
+            'err_code' => $errCode,
+            // 'answer_len' can stay out or be reintroduced later if needed
+            // 'answer_len' => isset($result['text']) ? strlen((string) $result['text']) : null,
+        ];
+
+        // Merge caller meta (latency, model, lang, etc)
+        foreach ($meta as $k => $v) {
+            $out[$k] = $v;
+        }
+
+//        // 4) Privacy: hash + preview user_msg if provided
+//        if (isset($out['user_msg'])) {
+//            $u = (string) $out['user_msg'];
+//            $out['user_msg_preview'] = mb_substr($u, 0, 120);
+//            $out['user_msg_hash']    = hash('sha256', $u);
+//            unset($out['user_msg']);
+//        }
+
+        // 5) Map to obslog columns
+        $chatId    = isset($out['chat_id']) ? (string) $out['chat_id'] : '';
+        $eventType = isset($out['event']) ? (string) $out['event'] : 'reply';
+        $status    = $ok ? 'ok' : 'failed';
+        $model     = isset($out['model']) ? (string) $out['model'] : '';
+
+        // Everything else goes into meta JSON
+        $metaForDb = $out;
+        unset($metaForDb['t'], $metaForDb['event']);
+
+        // 6) Write to chatai_obslog via ChatAI service
+        try {
+            /** @var \ProcessWire\ChatAI $chatAI */
+            $chatAI = $this->wire('modules')->get('ChatAI');
+            $logger = $chatAI->getObsLog();
+
+            $logger->log($eventType, [
+                'chat_id' => $chatId,
+                'status'  => $status,
+                'model'   => $model,
+                'meta'    => $metaForDb,
+            ]);
+        } catch (\Throwable $e) {
+            // Final safety net: nothing here should ever break chat
+            $this->wire('log')->save('chatai-obslog', $e->getMessage());
+        }
     }
+
+
+
+
 
     /** @return array{preview:string, hash:string} */
     protected function previewAndHash(string $text, int $limit = 120): array
@@ -1231,187 +1410,64 @@ SQL;
 
     private static function _createDBTables() {
         $db = wire('database');
-        // 1. Create tables
+
         $sql = <<<SQL
 
-        -- Prompt table
-        CREATE TABLE IF NOT EXISTS chatai_prompt (
-          id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
-          json LONGTEXT NOT NULL,
-          created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
+    -- Config / prompt JSON (used for \$cfg)
+    CREATE TABLE IF NOT EXISTS chatai_prompt (
+      id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
+      json LONGTEXT NOT NULL,
+      created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_520_ci;
 
-        --  Conversations
-        DROP TABLE IF EXISTS chatai_conversations;
-        CREATE TABLE chatai_conversations (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_uid CHAR(26) NOT NULL,                
-          anonymous_id CHAR(36) NULL,
-          user_id INT(11) UNSIGNED NULL,                    
-          session_id VARCHAR(128) NULL,
-          status ENUM('active','archived','blocked','error','closed') NOT NULL DEFAULT 'active',
-          started_at DATETIME NOT NULL,
-          last_activity_at DATETIME NOT NULL,
-          closed_at DATETIME NULL,
-          page_url_start TEXT NULL,
-          page_template_start VARCHAR(128) NULL,
-          title VARCHAR(255) NULL,
-          model VARCHAR(128) NULL,
-          message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          user_message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          assistant_message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          input_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          output_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          cost_estimate_cents INT UNSIGNED NOT NULL DEFAULT 0,
-          properties JSON NULL,
-          ip_hash VARBINARY(32) NULL,                       
-          user_agent VARCHAR(255) NULL,
+    -- Obs log: simple event logger for dashboard and stats
+    CREATE TABLE IF NOT EXISTS chatai_obslog (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      created DATETIME NOT NULL,
+      chat_id VARCHAR(64) NOT NULL DEFAULT '',
+      event_type VARCHAR(32) NOT NULL DEFAULT '',
+      status VARCHAR(32) NOT NULL DEFAULT '',
+      model VARCHAR(64) NOT NULL DEFAULT '',
+      meta MEDIUMTEXT NULL,
+      PRIMARY KEY (id),
+      KEY ix_created (created),
+      KEY ix_chat (chat_id),
+      KEY ix_event (event_type)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_520_ci;
 
-          PRIMARY KEY (id),
-          UNIQUE KEY ux_conversation_uid (conversation_uid),
-          KEY ix_anonymous_id (anonymous_id),
-          KEY ix_user_id (user_id),
-          KEY ix_status_last (status, last_activity_at),
-          KEY ix_started (started_at),
-          KEY ix_template (page_template_start)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        -- Messages
-        DROP TABLE IF EXISTS chatai_messages;
-        CREATE TABLE chatai_messages (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_id BIGINT UNSIGNED NOT NULL,
-          message_uid CHAR(26) NOT NULL,                      
-          seq INT UNSIGNED NOT NULL,                          
-          role ENUM('system','user','assistant','tool') NOT NULL,
-          content MEDIUMTEXT NOT NULL,
-          raw_payload MEDIUMTEXT NULL,
-          tool_name VARCHAR(128) NULL,
-          tool_arguments JSON NULL,
-          attachment_refs JSON NULL,
-          prompt_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          completion_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          finish_reason VARCHAR(64) NULL,
-          created_at DATETIME NOT NULL,
-          idempotency_key VARCHAR(64) NULL,
-          page_url TEXT NULL,
-          flags JSON NULL,
-
-        PRIMARY KEY (id),
-        UNIQUE KEY ux_message_uid (message_uid),
-        UNIQUE KEY ux_conv_seq (conversation_id, seq),
-        UNIQUE KEY ux_conv_idemp (conversation_id, idempotency_key),
-        KEY ix_conv_idemp (conversation_id, idempotency_key),
-        KEY ix_conv_created (conversation_id, created_at),        
-        CONSTRAINT fk_msg_conv
-          FOREIGN KEY (conversation_id) REFERENCES chatai_conversations(id)
-          ON DELETE CASCADE
-          ON UPDATE RESTRICT                                     
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        -- Events
-        DROP TABLE IF EXISTS chatai_events;
-        CREATE TABLE chatai_events (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_id BIGINT UNSIGNED NOT NULL,
-          event_time DATETIME NOT NULL,
-          event_type VARCHAR(64) NOT NULL,                    
-          event_data JSON NULL,
-          page_url TEXT NULL,
-        
-          PRIMARY KEY (id),
-          KEY ix_conv_time (conversation_id, event_time),
-          KEY ix_type_time (event_type, event_time),
-          CONSTRAINT fk_evt_conv
-            FOREIGN KEY (conversation_id) REFERENCES chatai_conversations(id)
-            ON DELETE CASCADE
-            ON UPDATE RESTRICT
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        --  Blocks 
-        DROP TABLE IF EXISTS chatai_blocks;
-        CREATE TABLE chatai_blocks (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          created_at DATETIME NOT NULL,
-          anonymous_id CHAR(36) NULL,
-          user_id INT(11) UNSIGNED NULL,                      
-          ip_hash VARBINARY(32) NULL,
-          reason VARCHAR(255) NOT NULL,
-          details JSON NULL,
-        
-          PRIMARY KEY (id),
-          KEY ix_anonymous (anonymous_id),
-          KEY ix_user (user_id),
-          KEY ix_created (created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-        
-        -- Vectors
-        DROP TABLE IF EXISTS chatai_vec_chunks;
-        CREATE TABLE chatai_vec_chunks (
-          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          `page_id` INT UNSIGNED NOT NULL,
-          `lang_id` VARCHAR(16) NOT NULL DEFAULT '0',
-          `chunk_index` INT UNSIGNED NOT NULL,
-          `source_url` TEXT NULL,
-          `title` VARCHAR(255) NULL,
-          `headings` MEDIUMTEXT NULL,
-          `slug` VARCHAR(255) NULL,
-          `text` MEDIUMTEXT NOT NULL,
-          `embedding_csv` LONGTEXT NOT NULL,
-          `created_at` DATETIME NOT NULL,
-          `updated_at` DATETIME NOT NULL,
-          PRIMARY KEY (`id`),
-          KEY `ix_page_lang` (`page_id`, `lang_id`),
-          FULLTEXT KEY `ft_text` (`text`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    -- Vectors: RAG chunks (can be regenerated)
+    DROP TABLE IF EXISTS chatai_vec_chunks;
+    CREATE TABLE chatai_vec_chunks (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      page_id INT UNSIGNED NOT NULL,
+      lang_id VARCHAR(16) NOT NULL DEFAULT '0',
+      chunk_index INT UNSIGNED NOT NULL,
+      source_url TEXT NULL,
+      title VARCHAR(255) NULL,
+      headings MEDIUMTEXT NULL,
+      slug VARCHAR(255) NULL,
+      text MEDIUMTEXT NOT NULL,
+      embedding_csv LONGTEXT NOT NULL,
+      created_at DATETIME NOT NULL,
+      updated_at DATETIME NOT NULL,
+      PRIMARY KEY (id),
+      KEY ix_page_lang (page_id, lang_id),
+      FULLTEXT KEY ft_text (text)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4;
 
 SQL;
 
         try {
             $db->query($sql);
-        } catch(\WireException $e) {
+        } catch(\Throwable $e) {
             wire('log')->save('errors', 'Failed to create ChatAI tables. ' . $e->getMessage());
         }
-
-        // 2) Trigger (separate call, no DELIMITER)
-        $trigger = <<<SQL
-            DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins;
-            CREATE TRIGGER chatai_messages_seq_before_ins
-            BEFORE INSERT ON chatai_messages
-            FOR EACH ROW
-            BEGIN
-              IF NEW.seq IS NULL OR NEW.seq = 0 THEN
-                SET NEW.seq = (
-                  SELECT COALESCE(MAX(m.seq), 0)
-                  FROM chatai_messages m
-                  WHERE m.conversation_id = NEW.conversation_id
-                ) + 1;
-              END IF;
-            END
-            SQL;
-        try {
-            // exec() can only run a single statement, so send them one by one
-            $db->exec('DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins');
-            $db->exec(
-                "CREATE TRIGGER chatai_messages_seq_before_ins
-             BEFORE INSERT ON chatai_messages
-             FOR EACH ROW
-             BEGIN
-               IF NEW.seq IS NULL OR NEW.seq = 0 THEN
-                 SET NEW.seq = (
-                   SELECT COALESCE(MAX(m.seq), 0)
-                   FROM chatai_messages m
-                   WHERE m.conversation_id = NEW.conversation_id
-                 ) + 1;
-               END IF;
-             END"
-            );
-        } catch (\Throwable $e) {
-            wire('log')->save('errors', 'Trigger create failed. Falling back to PHP-assigned seq. ' . $e->getMessage());
-            // Optional: mark a setting so PHP assigns seq instead of relying on the trigger
-        }
-
     }
 
     private static function _createTemplate() {
@@ -1491,19 +1547,10 @@ SQL;
         $templates = wire('templates');
 
         $sql = <<<SQL
-        -- Drop the trigger first (must happen before dropping chatai_messages)
-        DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins;
-        
         -- Drop the tables in dependency order (children first)
-        DROP TABLE IF EXISTS chatai_blocks;
-        DROP TABLE IF EXISTS chatai_events;
-        DROP TABLE IF EXISTS chatai_messages;
-        DROP TABLE IF EXISTS chatai_conversations;
-        DROP TABLE IF EXISTS chatai;
         DROP TABLE IF EXISTS chatai_prompt;
+        DROP TABLE IF EXISTS chatai_obslog;
         DROP TABLE IF EXISTS chatai_vec_chunks;
-        DROP TABLE IF EXISTS chatai_docs;
-        DROP TABLE IF EXISTS chatai_doc_blocks;
 SQL;
 
         try {

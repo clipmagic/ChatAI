@@ -19,93 +19,104 @@ class DashboardTab
         $inputfields->addClass('WireTab');
         $inputfields->attr('id', $sanitizer->fieldName($tabName) );
 
+        // --- General: chunk on save ---
         $f = $m->get('InputfieldCheckbox');
-        $f->attr('name+id', 'chunk_on_save');;
+        $f->attr('name+id', 'chunk_on_save');
         $f->label = $m->_('Update ChatAI on Save');
         $f->value = (int)($data['chunk_on_save'] ?? 1);
         $f->autocheck = 1;
-//        $f->checkedValue = 'Yes';
-//        $f->uncheckedValue = 'No';
         $f->notes = $m->_("When 'On', each page will be updated on save.\nRecommend setting to 'Off' when bulk updating pages, then using the Backfill & Reconcile later.");
         $inputfields->add($f);
 
-        // TODO add dashboard components
-        $content = "<p>Dashboard components here</p>";
+        // --- Analytics / KPI thresholds ---
+        $kpi = $m->get('InputfieldFieldset');
+        $kpi->label = $m->_('Analytics & KPIs');
+        $kpi->notes = $m->_('These thresholds control when the Insights panel raises warnings.');
+        $kpi->collapsed = true;
+
+        // Success rate warning threshold (%)
+        $f = $m->get('InputfieldInteger');
+        $f->name = 'obs_kpi_success_warn_pct';
+        $f->label = $m->_('Success rate warning threshold (%)');
+        $f->description = $m->_('Below this success rate the dashboard will flag issues. Default is 85%.');
+        $f->value = (int)($data['obs_kpi_success_warn_pct'] ?? 85);
+        $f->min = 1;
+        $f->max = 100;
+        $f->columnWidth(33);
+        $kpi->add($f);
+
+        // Average latency warning (ms)
+        $f = $m->get('InputfieldInteger');
+        $f->name = 'obs_kpi_latency_warn_ms';
+        $f->label = $m->_('Average latency warning (ms)');
+        $f->description = $m->_('Above this average latency the dashboard will warn that the bot may feel slow. Default is 5000 ms.');
+        $f->value = (int)($data['obs_kpi_latency_warn_ms'] ?? 5000);
+        $f->min = 100;
+        $f->max = 60000;
+        $f->columnWidth(33);
+        $kpi->add($f);
+
+        // Average latency high (ms)
+        $f = $m->get('InputfieldInteger');
+        $f->name = 'obs_kpi_latency_high_ms';
+        $f->label = $m->_('Average latency high (ms)');
+        $f->description = $m->_('Above this average latency the dashboard will highlight performance as poor. Default is 8000 ms.');
+        $f->value = (int)($data['obs_kpi_latency_high_ms'] ?? 8000);
+        $f->min = 100;
+        $f->max = 60000;
+        $f->columnWidth(34);
+        $kpi->add($f);
+
+        $inputfields->add($kpi);
+
+        // --- Dashboard layout / charts ---
+        if(file_exists(__DIR__ .'/dashboard-layout.php')) {
+            $files  = \ProcessWire\wire('files');
+            $view   = __DIR__ . '/dashboard-layout.php';
+
+            // pull event summary + volume data from obslog
+            $eventSummary = [];
+            $volumeData   = [];
+            $chatAI       = $m->get('ChatAI');
+
+            if($chatAI && method_exists($chatAI, 'getObsLog')) {
+                $logger = $chatAI->getObsLog();
+
+                if($logger && method_exists($logger, 'fetchSummary')) {
+                    $eventSummary = $logger->fetchSummary();
+                }
+                if ($logger && method_exists($logger, 'fetchDailyVolume')) {
+                    $days       = 7;
+                    $volumeData = $logger->fetchDailyVolume($days);
+                }
+            }
+
+            $content = $files->render(
+                $view,
+                [
+                    'eventSummary' => $eventSummary,
+                    'volumeData'   => $volumeData,
+                    'page'         => $chatAI ? $chatAI->wire('page') : \ProcessWire\wire('page')
+                ],
+                ['allowedPaths' => [__DIR__ . '/']]
+            );
+        } else {
+            $content = "<p>Dashboard components here</p>";
+        }
 
         $markUp = $m->get('InputfieldMarkup');
         $markUp->attr('value', $content);
-
         $inputfields->add($markUp);
 
+        // --- Insights (read-only) ---
+        $chatprocess = $m->get('ProcessChatAI');
+        $insights = $m->get('InputfieldMarkup');
+        $insights->label = $m->_('Insights');
+        $json = json_decode($chatprocess->renderInsightsJson());
+        $insights->value = $json->html ?? '';
+        $inputfields->add($insights);
 
-
-        // --- Metrics Preview (read-only) ---
-        $preview = $m->get('InputfieldMarkup');
-        $preview->label = $m->_('Metrics Preview');
-        $preview->collapsed = \ProcessWire\Inputfield::collapsedYes;
-        $preview->notes = $m->_('Last 50 lines from /site/assets/logs/chatai_metrics.txt');
-
-        if(!is_dir($config->paths->logs . 'chatai'))
-            mkdir($config->paths->logs . 'chatai', $config->chmodDir, true);
-
-        $logPath = $config->paths->logs . 'chatai/chatai_metrics.txt';
-
-
-        $html = '<div class="chatai-metrics"><table class="uk-table uk-table-small"><thead><tr>'
-            . '<th>t</th><th>ok</th><th>err</th><th>ms</th><th>count</th><th>rem</th><th>stop</th><th>model</th></tr></thead><tbody>';
-
-        // TODO - fix - broke with enforcelimit method
-        if (is_file($logPath)) {
-
-//            $lines = @file($logPath, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-//            foreach (array_slice(array_reverse($lines), 0, 50) as $line) {
-//                $j = json_decode($line, true);
-//                if (!is_array($j)) continue;
-//                $html .= sprintf(
-//                    '<tr><td>%s</td><td>%s</td><td>%s</td><td>%d</td><td>%d</td><td>%s</td><td>%s</td><td>%s</td></tr>',
-//                    htmlspecialchars($j['t'] ?? '', ENT_QUOTES, 'UTF-8'),
-//                    !empty($j['ok']) ? '✓' : '✗',
-//
-//                    htmlspecialchars($j['err_code'] ?? '', ENT_QUOTES, 'UTF-8'),
-//                    (int)($j['latency_ms'] ?? 0),
-//                    (int)($j['count'] ?? 0),
-//                    isset($j['remaining']) ? (int)$j['remaining'] : '',
-//                    !empty($j['stop']) ? '■' : '',
-//                    htmlspecialchars($j['err_code'] ?? '', ENT_QUOTES, 'UTF-8'),
-//                );
-//            }
-
-        } else {
-            $html .= '<tr><td colspan="8"><em>No metrics yet.</em></td></tr>';
-        }
-        $html .= '</tbody></table></div>';
-
-        $preview->value = $html;
-        $inputfields->add($preview);
-
-
-        // Observability
-        $obs = $m->get('InputfieldFieldset');
-        $obs->label = $m->_('Observability');
-        $obs->notes = $m->_('Logs compact JSON lines to /site/assets/logs/chatai/chatai_metrics.txt');
-
-        $f1 = $m->get('InputfieldCheckbox');
-        $f1->name = 'obs_enabled';
-        $f1->label = $m->_('Enable observability logging');
-        $f1->value = (int)($data['obs_enabled'] ?? 1);
-        $obs->add($f1);
-
-        $f2 = $m->get('InputfieldInteger');
-        $f2->name = 'obs_sample_rate';
-        $f2->label = $m->_('Sample rate (1 = log every request, 10 = 1 in 10)');
-        $f2->value = (int)($data['obs_sample_rate'] ?? 1);
-        $f2->min = 1;
-        $f2->showIf = 'obs_enabled=1';
-        $obs->add($f2);
-
-        $inputfields->add($obs);
-
-
+        // --- Backfill & Reconcile ---
         $bf = $m->get('InputfieldFieldset');
         $bf->label = $m->_('Backfill & Reconcile');
         $bf->notes = $m->_('Scan all site pages. Index eligible pages missing from the vector DB; delete vectors for ineligible pages that still have entries.');
@@ -115,7 +126,6 @@ class DashboardTab
         $dry->label = $m->_('Dry run (report only, no changes)');
         $dry->checked = true;
         $dry->columnWidth(50);
-
         $bf->add($dry);
 
         $chunk = $m->get('InputfieldInteger');
@@ -125,7 +135,6 @@ class DashboardTab
         $chunk->min = 50;
         $chunk->max = 1000;
         $chunk->columnWidth(50);
-
         $bf->add($chunk);
 
         $btn = $m->get('InputfieldSubmit');
@@ -146,6 +155,4 @@ class DashboardTab
 
         return $output;
     }
-
-
 }
