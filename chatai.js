@@ -145,7 +145,19 @@ let chatai = {
             messages.append(name);
         }
         messages.append(msg);
-        messages.scrollTop = messages.scrollHeight;
+        //messages.scrollTop = messages.scrollHeight;
+        const wrapper = document.querySelector('.chatbot-msg-wrapper');
+        if (wrapper) {
+            const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const behavior = prefersReduced ? 'auto' : 'smooth';
+
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    wrapper.scrollTo({ top: wrapper.scrollHeight, behavior });
+                });
+            });
+        }
+
 
         chataiStore.push({
             role,
@@ -172,7 +184,20 @@ let chatai = {
         msg.className = 'chatbot-msg ' + role;
         msg.innerHTML = html; // already sanitized server-side
         wrap.appendChild(msg);
-        wrap.scrollTop = wrap.scrollHeight;
+        //wrap.scrollTop = wrap.scrollHeight;
+
+        const wrapper = document.querySelector('.chatbot-msg-wrapper');
+        if (wrapper) {
+            const prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            const behavior = prefersReduced ? 'auto' : 'smooth';
+
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    wrapper.scrollTo({ top: wrapper.scrollHeight, behavior });
+                });
+            });
+        }
+
 
         chataiStore.push({role, type: 'html', name: name || null, content: html});
     },
