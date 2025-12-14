@@ -372,17 +372,17 @@ class ChatAIObsLog extends Wire
     public function buildInsightsSnapshot(int $days = 30): array
     {
         $db   = $this->wire('database');
-        $days = max(1, min($days, 60)); // hard cap
+        $days = max(1, min($days, 60));
 
-        $from    = new \DateTime("-{$days} days");
+        $from = new \DateTime("-{$days} days");
         $fromStr = $from->format('Y-m-d 00:00:00');
 
         $sql = "
-            SELECT created, event_type, status, model, meta
-            FROM " . self::TABLE . "
-            WHERE created >= :from
-            ORDER BY created ASC
-        ";
+        SELECT created, chat_id, event_type, status, model, meta
+        FROM " . self::TABLE . "
+        WHERE created >= :from
+        ORDER BY created DESC
+    ";
 
         $stmt = $db->prepare($sql);
         $stmt->bindValue(':from', $fromStr);
@@ -395,66 +395,45 @@ class ChatAIObsLog extends Wire
             return [];
         }
 
-        if (!$rows) {
-            return [];
-        }
-
         $totalEvents   = 0;
+        $totalSuccess  = 0;
+        $totalFailed   = 0;
         $totalReplies  = 0;
         $totalCutoffs  = 0;
         $totalBlocked  = 0;
-        $okEvents      = 0;
-        $failedEvents  = 0;
-
-        $latencySum    = 0;
+        $sumLatency    = 0;
         $latencyCount  = 0;
+        $rateLimited   = 0;
 
-        $perDay        = []; // date => stats
-        $errorCodes    = []; // err_code => count
-        $blockedIpHashes = []; // unique blocked IP hashes
+        $chatIds       = [];
+        $blockedIps    = [];
+        $topErrorCodes = [];
 
         foreach ($rows as $row) {
             $totalEvents++;
 
-            $created   = (string) $row['created'];
-            $dateKey   = substr($created, 0, 10); // Y-m-d
             $eventType = (string) $row['event_type'];
             $status    = (string) $row['status'];
-
-            if (!isset($perDay[$dateKey])) {
-                $perDay[$dateKey] = [
-                    'date'     => $dateKey,
-                    'requests' => 0,
-                    'replies'  => 0,
-                    'cutoffs'  => 0,
-                    'blocked'  => 0,
-                    'ok'       => 0,
-                    'failed'   => 0,
-                ];
-            }
-
-            $perDay[$dateKey]['requests']++;
+            $chatId    = (string) $row['chat_id'];
 
             if ($status === 'ok') {
-                $okEvents++;
-                $perDay[$dateKey]['ok']++;
+                $totalSuccess++;
             } else {
-                $failedEvents++;
-                $perDay[$dateKey]['failed']++;
+                $totalFailed++;
+            }
+
+            if ($chatId !== '') {
+                $chatIds[$chatId] = true;
             }
 
             if ($eventType === 'reply') {
                 $totalReplies++;
-                $perDay[$dateKey]['replies']++;
             } elseif ($eventType === 'cutoff') {
                 $totalCutoffs++;
-                $perDay[$dateKey]['cutoffs']++;
             } elseif ($eventType === 'blocked') {
                 $totalBlocked++;
-                $perDay[$dateKey]['blocked']++;
             }
 
-            // Decode meta JSON to pull latency, error codes, ip_hash etc
             $meta = [];
             if (!empty($row['meta'])) {
                 $decoded = json_decode($row['meta'], true);
@@ -463,48 +442,48 @@ class ChatAIObsLog extends Wire
                 }
             }
 
-            if (!empty($meta['latency_ms']) && is_numeric($meta['latency_ms'])) {
-                $latencySum   += (float) $meta['latency_ms'];
-                $latencyCount += 1;
+            if (isset($meta['latency_ms']) && is_numeric($meta['latency_ms'])) {
+                $sumLatency   += (int) $meta['latency_ms'];
+                $latencyCount++;
             }
 
-            if (!empty($meta['err_code']) && $status !== 'ok') {
+            if (isset($meta['err_code']) && $meta['err_code'] !== null && $meta['err_code'] !== '') {
                 $code = (string) $meta['err_code'];
-                if (!isset($errorCodes[$code])) $errorCodes[$code] = 0;
-                $errorCodes[$code]++;
+                $topErrorCodes[$code] = ($topErrorCodes[$code] ?? 0) + 1;
+
+                if (in_array($code, ['rate_limit', 'rate_limit_exceeded', 'throttled'], true)) {
+                    $rateLimited++;
+                }
             }
 
-            if ($eventType === 'blocked' && !empty($meta['ip_hash'])) {
-                $blockedIpHashes[(string) $meta['ip_hash']] = true;
+            if ($eventType === 'blocked' && isset($meta['ip_hash']) && $meta['ip_hash'] !== '') {
+                $blockedIps[(string) $meta['ip_hash']] = true;
             }
         }
 
-        ksort($perDay);
 
-        $avgLatency = $latencyCount > 0
-            ? (int) round($latencySum / $latencyCount)
-            : null;
+        $totalMessages = $totalReplies + $totalCutoffs;
+        $totalChats    = count($chatIds);
+        $avgLatency    = $latencyCount > 0 ? (int) round($sumLatency / $latencyCount) : null;
+        $successRate   = $totalEvents > 0 ? ($totalSuccess / $totalEvents) : null;
 
-        $successRate = $totalEvents > 0
-            ? ($okEvents / $totalEvents)
-            : null;
-
-        // Sort error codes by frequency desc
-        arsort($errorCodes);
+        arsort($topErrorCodes);
 
         return [
             'period_days'        => $days,
             'total_events'       => $totalEvents,
+            'total_success'      => $totalSuccess,
+            'total_failed'       => $totalFailed,
             'total_replies'      => $totalReplies,
             'total_cutoffs'      => $totalCutoffs,
             'total_blocked'      => $totalBlocked,
-            'ok_events'          => $okEvents,
-            'failed_events'      => $failedEvents,
-            'success_rate'       => $successRate,        // 0.0–1.0 or null
-            'avg_latency_ms'     => $avgLatency,         // int or null
-            'per_day'            => array_values($perDay),
-            'top_error_codes'    => $errorCodes,
-            'unique_blocked_ips' => count($blockedIpHashes),
+            'total_messages'     => $totalMessages,
+            'total_chats'        => $totalChats,
+            'avg_latency_ms'     => $avgLatency,
+            'success_rate'       => $successRate,
+            'unique_blocked_ips' => count($blockedIps),
+            'top_error_codes'    => $topErrorCodes,
+            'rate_limited'       => $rateLimited,
         ];
     }
 

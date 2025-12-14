@@ -16,7 +16,6 @@ $(document).ready(function() {
 document.addEventListener('DOMContentLoaded', function () {
     if (typeof Chart === 'undefined') return;
     var hasChart = (typeof Chart !== 'undefined');
-    //var t = (window.ProcessWire && ProcessWire.config && ProcessWire.config.chataiDashboard) || {};
 
     var t = window.chatAIDashboard || {};
 
@@ -29,14 +28,43 @@ document.addEventListener('DOMContentLoaded', function () {
     var volumeCanvas = document.getElementById('chatai-chart-volume');
     var volumeChart = null;
 
+    function reloadKpis(days) {
+        if (!t.kpiUrl) return;
+
+        var url = t.kpiUrl + '&days=' + encodeURIComponent(days);
+
+        fetch(url, { credentials: 'same-origin' })
+            .then(function(res) {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.json();
+            })
+            .then(function(s) {
+                if (!s) return;
+
+                setText('chatai-kpi-chats', s.total_chats);
+                setText('chatai-kpi-messages', s.total_messages);
+
+                var ec = (parseInt(s.total_errors || 0, 10) + parseInt(s.total_cutoffs || 0, 10));
+                setText('chatai-kpi-errorsCutoffs', ec);
+                setText('chatai-kpi-errorsCutoffsNote', 'Errors: ' + (s.total_errors || 0) + ', cutoffs: ' + (s.total_cutoffs || 0));
+
+                setText('chatai-kpi-blocked', s.total_blocked || 0);
+                setText('chatai-kpi-blockedNote', 'Blocked: ' + (s.total_blocked || 0) + ', rate limited: ' + (s.rate_limited || 0));
+            })
+            .catch(function(err) {
+                console.error('ChatAI: failed to load KPI snapshot:', err);
+            });
+    }
+
+    function setText(id, v) {
+        var el = document.getElementById(id);
+        if (el) el.textContent = (v === null || typeof v === 'undefined') ? '' : String(v);
+    }
+
 
     function loadVolumeData(days) {
-        console.log('t in loadVolumeData: ', t)
-
         if (!t.volumeUrl || !volumeCanvas) return;
-
         var url = t.volumeUrl + '&days=' + encodeURIComponent(days);
-        console.log('ChatAI: fetching volume data', { days: days, url: url });
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (res) {
@@ -92,8 +120,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!t.insightsUrl) return;
 
         var url = t.insightsUrl + '&days=' + encodeURIComponent(days);
-        var body = document.getElementById('chatai-dashboard-insights-body');
-        if (!body) return;
+        var body = document.querySelector('#chatai-dashboard-insights .InputfieldContent');        if (!body) return;
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (res) {
@@ -144,7 +171,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 // reload range-dependent pieces
                 loadVolumeData(days);
                 reloadInsights(days);
-                // Donut chart and anything else can be hooked here later if needed
+                reloadKpis(days)
             });
         });
 

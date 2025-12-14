@@ -138,6 +138,20 @@ class ProcessChatAI extends Process
             try { $rag->deletePageVectors($page); }
             catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
         });
+
+        $this->addHookAfter('ImportPagesCSV::execute', function(HookEvent $event) {
+            $processChatAI = $this->wire('modules')->get('ProcessChatAI');
+            if (!$processChatAI) return;
+
+            $cfg = $processChatAI->loadPromptSettings();
+            if (!empty($cfg['chunk_on_save'])) {
+                /** @var ProcessImportPagesCSV $ips */
+                $ips = $event->object;
+                $ips->warning(
+                    $this->_('ChatAI "Update on Save" is currently enabled. For large imports, consider turning it off temporarily to avoid heavy re-indexing during import.')
+                );
+            }
+        });
     }
 
     //*** Hooks ***//
@@ -234,6 +248,8 @@ class ProcessChatAI extends Process
 
         return $output;
     }
+
+
 
     protected function renderVolumeDataJson(): string
     {
@@ -859,38 +875,41 @@ class ProcessChatAI extends Process
     }
 
 
-
-    public function isBlacklistTerm($message) : bool
+    public function isBlacklistTerm($message): bool
     {
         $sanitizer = $this->wire('sanitizer');
-        $message = $sanitizer->text($message);
-        $cfg = $this->loadPromptSettings();
+        $cfg       = $this->loadPromptSettings();
 
-        $blacklistTerm = false;
-        if(!isset($cfg['use_blacklist'])) return $blacklistTerm;
+        if (empty($cfg['use_blacklist']) || empty($cfg['blacklist'])) {
+            return false;
+        }
 
-        if (!empty($cfg['blacklist'])) {
-            $blacklist = explode(',', $cfg['blacklist']);
-            foreach ($blacklist as $term) {
-                $term = $sanitizer->text($term);
-                if ($term && stripos($message, $term) !== false) {
-                    $blacklistTerm = true;
-                    break;
-                }
+        $msg = mb_strtolower($sanitizer->text($message));
+        if ($msg === '') return false;
+
+        $terms = array_filter(array_map('trim', explode(',', $cfg['blacklist'])));
+
+        foreach ($terms as $t) {
+            $t = mb_strtolower($sanitizer->text($t));
+
+            // Convert "hang myself" → "hang\s+myself"
+            $pattern = '/\b' . preg_quote(str_replace(' ', '___SPACE___', $t), '/') . '\b/iu';
+            $pattern = str_replace('___SPACE___', '\s+', $pattern);
+
+            if (preg_match($pattern, $msg)) {
+                $this->wire('log')->save(
+                    'chatai-blacklist-debug',
+                    "Matched phrase '{$t}' in message: '{$msg}'"
+                );
+                return true;
             }
         }
-        return $blacklistTerm;
+
+        return false;
     }
 
 
     // Dashboard features
-    /** Compact, single source of truth for eligibility (same as your saveReady logic) */
- /*   protected function isEligibleForRag(\ProcessWire\Page $page, array $cfg): bool {
-        $rag = new RAG();
-        if (!$rag->shouldIndexPage($page, $cfg)) return false;
-        return (bool) $page->isPublic(); // (You can swap to viewable($guest) later)
-    }*/
-
 
     /** Path to backfill log */
     protected function backfillLogPath(): string {

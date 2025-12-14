@@ -59,7 +59,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function getModuleConfigInputfields(array $data) : InputfieldWrapper
     {
-        $modules = wire('modules');
+        $modules     = wire('modules');
         $inputfields = new InputfieldWrapper();
 
         // OpenAI Settings
@@ -75,105 +75,102 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->value = $data['api_key'] ?? '';
         $fieldset->add($f);
 
+        // Model select – GPT-5 family only
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'model');
         $f->label = $this->_('OpenAI Model');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->addOptions([
-            'gpt-5-mini' => "gpt-5-mini",
+            'gpt-5-mini' => 'gpt-5-mini (default)',
             'gpt-5-nano' => 'gpt-5-nano',
-            'gpt-5' => 'gpt-5',
-            'gpt-5.1' => 'gpt-5.1'
+            'gpt-5.2'    => 'gpt-5.2',
+            'gpt-5'      => 'gpt-5',
+            'gpt-5.1'    => 'gpt-5.1',
         ]);
-
         $f->value = $data['model'] ?? 'gpt-5-mini';
         $fieldset->add($f);
 
+        // Verbosity (used by your buildPostData; always visible now)
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'verbosity');
         $f->label = $this->_('Verbosity');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->addOptions([
-            'low' => "Low",
+            'low'    => 'Low',
             'medium' => 'Medium',
-            'high' => 'High'
+            'high'   => 'High',
         ]);
         $f->value = $data['verbosity'] ?? 'medium';
-        $f->showIf("model=gpt-5|gpt-5-mini|gpt-5-nano");
         $fieldset->add($f);
 
+        // Reasoning Effort (GPT-5 style knob; always visible now)
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'reasoningEffort');
         $f->label = $this->_('Reasoning Effort');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->addOptions([
-            'minimal' => "Minimal",
-            'low' => "Low",
-            'medium' => 'Medium',
-            'high' => 'High'
+            'minimal' => 'Minimal',
+            'low'     => 'Low',
+            'medium'  => 'Medium',
+            'high'    => 'High',
         ]);
-        $f->showIf("model=gpt-5|gpt-5-mini|gpt-5-nano");
         $f->value = $data['reasoningEffort'] ?? 'medium';
         $fieldset->add($f);
 
-
-        $f = $modules->get('InputfieldFloat');
-        $f->attr('name+id', 'temperature');
-        $f->label = $this->_('Temperature (0–1)');
-        $f->columnWidth	= 20;
-        $f->notes = $this->_('Lower is more factual, higher is more creative');
-        $f->step = 0.1;
-        $f->min = 0;
-        $f->max = 1;
-        $f->value = $data['temperature'] ?? 0.7;
-        $f->showIf("model!=gpt-5|gpt-5-mini|gpt-5-nano");
-        $fieldset->add($f);
-
+        // Max tokens per message (Responses: max_output_tokens)
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_completion_tokens');
         $f->label = $this->_('Max tokens');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Max tokens per message');
         $f->value = $data['max_completion_tokens'] ?? 1000;
         $fieldset->add($f);
 
+        // Max questions per conversation
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_messages');
         $f->label = $this->_('Maximum questions');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Max questions per conversation');
         $f->value = $data['max_messages'] ?? 20;
         $fieldset->add($f);
 
+        // Blacklist strikes
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_strikes');
         $f->label = $this->_('Maximum blacklist');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Number of blacklist strikes before being blocked');
         $f->value = $data['max_strikes'] ?? 3;
         $fieldset->add($f);
 
-
         $inputfields->add($fieldset);
 
-
+// Roles allowed to access ChatAI dashboard / craft prompt
         $f = $modules->get('InputfieldCheckboxes');
         $f->attr('name+id', 'prompt_roles');
         $f->label = $this->_('Roles allowed to craft prompt');
         $roles = $this->wire('roles');
         $options = [];
-        $pageEditPermission = $roles->find("status=published");
-        if($pageEditPermission->count > 0) {
-            foreach($pageEditPermission->roles as $role) {
-                if(!$role->hasPermission('page-edit') || $role->name === 'superuser' ) continue;
-                $options[$role->name] = $role->name;
-            }
-            $f->addOptions($options);
+
+        // List all roles except guest and superuser.
+        // Superuser is always allowed;
+        foreach ($roles as $role) {
+            if ($role->name === 'superuser') continue;
+            $options[$role->name] = $role->name;
         }
-        $value = $data['prompt_roles'] ?? '';
-        $f->attr('value', $value);
+
+        $f->addOptions($options);
+
+        // Stored as an array of role names; if empty, only superuser can use the dashboard
+        $f->value = $data['prompt_roles'] ?? [];
+
         $f->columnWidth = 50;
-        $note = $this->_("Superuser enabled by default.\r\nYou may optionally add a ChatAI specific role with page-edit permission.");
+        $note = $this->_(
+            "Superuser is always allowed.\r\n" .
+            "If no roles are selected, only superusers can access the ChatAI dashboard tabs.\r\n" .
+            "Select one or more roles (for example the 'chatai' role created on install) to allow them as well."
+        );
         $f->notes($note);
         $inputfields->add($f);
 
@@ -196,7 +193,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->label($this->_('Path to CSS file'));
         $f->notes("Default is /site/modules/ChatAI/chatai.css");
         $value = $data['css'] ?? '/site/modules/ChatAI/chatai.css';
-        $f->attr('value', $value );
+        $f->attr('value', $value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -208,8 +205,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->attr('value', $value);
         $f->stripTags = true;
         $fieldset->add($f);
-        $inputfields->add($fieldset);
-
 
         $inputfields->add($fieldset);
 
@@ -237,65 +232,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $js = "<script src='$this->js' ></script>";
         return $js;
     }
-
-/*    public function isMessageAllowed($message) : stdClass {
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $session = $this->wire('session');
-        $output = new stdClass();
-        $output->name = $chatProcess->getBotName();
-        $output->blacklisted = false;
-        $output->stop = false;
-        $output->error = null;
-        $output->reply = null;
-        $output->html = null;
-
-        // Check message is not empty. Fallback from HTML check
-        if ($message === '') {
-            $output->error = $this->getErrorMessage(2);
-            return $output;
-        }
-
-        // blacklist check
-        $blacklistTerm = $chatProcess->isBlacklistTerm($message);
-        if (!$blacklistTerm)  return $output;
-
-        $strikes = (int)($session->getFor('chatai', 'blacklist_strikes') ?? 0) + 1;
-        $session->setFor('chatai', 'blacklist_strikes', $strikes);
-
-        if ($strikes && $strikes >= $this->max_strikes) {
-            $output->stop = true;
-            $output->blacklistTerm = true;
-            $err = $this->getErrorMessage(13);
-            // Log hard blacklist event with IP
-            try {
-                $ip   = (string) $this->wire('input')->ip;
-                $ph   = $this->previewAndHash((string) $msg);
-                $meta = [
-                    'event'            => 'blocked',
-                    'ip'               => $ip,
-                    'ip_hash'          => hash('sha256', $ip),
-                    'reason'           => 'blacklist',
-                    'lang_id'          => (int) ($langId ?? 0),
-                    'user_msg_preview' => $ph['preview'],
-                    'user_msg_hash'    => $ph['hash'],
-                ];
-
-                // minimal result payload for logger
-                $this->obsLog(['ok' => false, 'error' => 'blacklist'], $meta);
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai-obslog', $e->getMessage());
-            }
-        } else {
-            $session->setFor('chatai', 'blacklist_strikes', $strikes);
-            $output->stop = false;
-            $err = $this->getErrorMessage(14, $strikes, $this->max_strikes);
-        }
-
-        $output->error = $err;
-        $output->reply = $err->msg;
-
-        return $output;
-    }*/
 
     public function isMessageAllowed($message) : \stdClass {
         $chatProcess = $this->wire('modules')->get('ProcessChatAI');
@@ -338,29 +274,25 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             try {
                 $ip = (string) $this->wire('input')->ip;
 
-                // BUGFIX: use $message here, not $msg
                 $ph = $this->previewAndHash((string) $message);
 
                 $meta = [
                     'event'            => 'blocked',
+                    'chat_id'          => $this->getCurrentChatId(),
                     'ip'               => $ip,
                     'ip_hash'          => hash('sha256', $ip),
                     'reason'           => 'blacklist',
-                    'lang_id'          => $langId,
+                    'lang_id'          => (int) ($langId ?? 0),
                     'user_msg_preview' => $ph['preview'],
                     'user_msg_hash'    => $ph['hash'],
                 ];
 
-                // minimal result payload for logger
                 $this->obsLog(['ok' => false, 'error' => 'blacklist'], $meta);
             } catch (\Throwable $e) {
                 $this->wire('log')->save('chatai-obslog', $e->getMessage());
             }
 
         } else {
-            // This second setFor() was redundant. Strikes already stored above.
-            // $session->setFor('chatai', 'blacklist_strikes', $strikes);
-
             $output->stop = false;
             $err = $this->getErrorMessage(14, $strikes, $this->max_strikes);
         }
@@ -371,6 +303,19 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $output;
     }
 
+    protected function getCurrentChatId(): string
+    {
+        $session = $this->wire('session');
+
+        $chatId = (string) $session->getFor('chatai', 'chat_id');
+        if (!$chatId) {
+            // Short, opaque id; not user-identifying
+            $chatId = bin2hex(random_bytes(8)); // 16 hex chars
+            $session->setFor('chatai', 'chat_id', $chatId);
+        }
+
+        return $chatId;
+    }
 
 
     private function buildPostData(string $model, array $messages): \stdClass {
@@ -394,13 +339,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 // intentionally DO NOT set: temperature, top_p, presence_penalty, frequency_penalty
                 break;
 
-            // Older models: keep classic sampling parameters
+            // Keep for newer models
             default:
-                if (isset($this->temperature))       $p->temperature = (float) $this->temperature;
-                if (!empty($this->max_completion_tokens)) {
-                    // works with modern chat completions; keep your current field name
-                    $p->max_completion_tokens = (int) $this->max_completion_tokens;
-                }
                 break;
         }
         return $p;
@@ -663,7 +603,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Quick out if small talk
         if($label === 'small_talk') {
             $result->reply = $cfgLang('smalltalk_reply') ?: 'Hello. How can I help you today?';
-            $this->enforceMessageLimit($result);
             return $result;
         }
 
@@ -692,10 +631,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     }
                     break;
             }
-            $this->enforceMessageLimit($result);
             return $result;
         }
-        $this->enforceMessageLimit($result);
 
         // optional: add RAG context as an extra system message if you built it
         $hist = $session->getFor('chatai','history') ?? [];
@@ -708,6 +645,14 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // User message last
         $messages[] = ['role' => 'user', 'content' => $msg];
+
+        // Message limit: only applies to OpenAI calls
+        $credit = $this->consumeMessageCredit();
+        if (!empty($credit['blocked'])) {
+            $result->error = $this->getErrorMessage(4); // reached limit
+            $result->stop  = true;
+            return $result;
+        }
 
         // Model call
         try {
@@ -739,9 +684,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
             $meta = [
                 'event'            => $event,
+                'chat_id'          => $this->getCurrentChatId(),
                 'latency_ms'       => (int) round((microtime(true) - $started) * 1000),
-                'count'            => (int) $this->wire('session')->getFor('chatai', 'count'),
-                'remaining'        => null,
+                'count'            => $credit['count'],
+                'remaining'        => $credit['remaining'],
                 'stop'             => false,
                 'lang_id'          => (int) ($userLangId ?? 0),
                 'model'            => (string) $this->model,
@@ -749,15 +695,17 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'cutoff'           => !empty($result->cutoff),
                 'user_msg_preview' => $ph['preview'],
                 'user_msg_hash'    => $ph['hash'],
-            ];
 
+            ];
+            $meta['max_messages'] = (int) ($credit['max'] ?? 0);
+            $meta['count']        = (int) ($credit['count'] ?? 0);
+            $meta['remaining']    = (int) ($credit['remaining'] ?? 0);
 
             if (!$m->ok) {
                 $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
                 $this->obsLog($m, $meta);
             } else {
                 // Limit check
-                $this->enforceMessageLimit($result);
                 $meta['stop']       = (bool)$result->stop;
                 $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
                 $this->obsLog($m, $meta);
@@ -816,11 +764,63 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $hist[] = ['role'=>'assistant','content'=>$plain];
             $session->setFor('chatai','history', array_slice($hist, -6));
         }
+
+
+        $meta['remaining'] = (int) $credit['remaining'];
+        $meta['count']     = (int) ($credit['count'] ?? 0);
+
+        // Use remaining credits to warn/stop (OpenAI-call budget)
+        // Do NOT show the "one left" warning if cutoff already forces a hard stop UX.
+        if (empty($result->cutoff) && isset($credit['remaining']) && (int)$credit['max'] > 0) {
+
+            $remaining = (int) $credit['remaining'];
+
+            if ($remaining === 1) {
+                if (empty($result->stop)) { // only if not already a hard stop
+                    $result->error = $this->getErrorMessage(10);
+                    $result->stop  = false;
+                }
+            } elseif ($remaining === 0) {
+                $result->error = $this->getErrorMessage(4); // or 11
+                $result->stop  = true;
+            }
+        }
+
+
         return $result;
     }
 
     /** Example helper stubs  */
-    protected function enforceMessageLimit(stdClass $result) : ?stdClass {
+
+    protected function consumeMessageCredit(): array
+    {
+        $session = $this->wire('session');
+        $max = (int) $this->max_messages;
+
+        if ($max <= 0) {
+            return ['blocked' => false, 'max' => 0, 'count' => 0, 'remaining' => 0];
+        }
+
+        $count = (int) ($session->getFor('chatai', 'count') ?? 0);
+
+        if ($count >= $max) {
+            return ['blocked' => true, 'max' => $max, 'count' => $count, 'remaining' => 0];
+        }
+
+        $count++;
+        $session->setFor('chatai', 'count', $count);
+
+        return [
+            'blocked'   => false,
+            'max'       => $max,
+            'count'     => $count,
+            'remaining' => max(0, $max - $count),
+        ];
+    }
+
+
+
+/*    protected function enforceMessageLimit(stdClass $result) : ?stdClass {
         $session = $this->wire('session');
         $max = (int) $this->max_messages;               // 0 or less = unlimited
         if ($max <= 0) return null;
@@ -846,7 +846,53 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             return $result;
         }
         return null; // under limit
-    }
+    }*/
+
+ /*   protected function enforceMessageLimit(\stdClass $result): ?\stdClass
+    {
+        $session = $this->wire('session');
+        $max = (int) $this->max_messages; // 0 or less = unlimited
+        if ($max <= 0) return null;
+
+        $count = (int) ($session->getFor('chatai', 'count') ?? 0);
+
+        // If already exhausted, block immediately (do NOT increment)
+        if ($count >= $max) {
+            $err = $this->getErrorMessage(4); // "This chat has reached its limit..."
+            $result->error = $err;
+            $result->stop  = true;
+            return $result;
+        }
+
+        // Count this accepted user message
+        $count++;
+        $session->setFor('chatai', 'count', $count);
+
+        $remaining = max(0, $max - $count);
+        $result->remaining = $remaining; // optional; useful for debugging/UI
+
+        // One left (after this one, there will be 1 remaining)
+        if ($remaining === 1) {
+            $warn = $this->getErrorMessage(10); // "You have one question left..."
+            $result->error = $warn;
+            $result->stop  = false;
+            return $result;
+        }
+
+        // Just used the last allowed message
+        if ($remaining === 0) {
+            // Add a dedicated message for this case (recommended)
+            // Should be warning-style (not replacing the answer), but should lock input.
+            $warn = $this->getErrorMessage(11); // "This was your last question. Please start a new chat to continue."
+            $result->error = $warn;
+            $result->stop  = true;
+            return $result;
+        }
+
+        return null;
+    }*/
+
+
 
     public function getObsLog(): \ProcessWire\ChatAIObsLog
     {
@@ -854,78 +900,16 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     }
 
 
-
-    // logs one compact JSON line
- /*   protected function obsLog($result, array $meta = []): void {
-        // config + sampling
-        $cfg = $this->wire('modules')->get('ProcessChatAI')->loadPromptSettings();
-        if (empty($cfg['obs_enabled'])) return;
-        $sr = max(1, (int)($cfg['obs_sample_rate'] ?? 1));
-        if (mt_rand(1, $sr) !== 1) return;
-
-        // normalize result to array
-        if (is_object($result)) $result = json_decode(json_encode($result), true);
-        $result = is_array($result) ? $result : [];
-
-        // build payload
-        $out = [
-            't'          => date('c'),
-            'event'      => 'reply',
-            'ok'         => (bool)($result['ok'] ?? false),
-            'err_code'   => $result['error'] ?? null,
-       //     'answer_len' => isset($result['text']) ? strlen((string)$result['text']) : null,
-        ];
-
-        // merge context (latency, counts, model, endpoint, lang, etc.)
-        foreach ($meta as $k => $v) $out[$k] = $v;
-
-        // privacy: hash + preview user_msg if provided
-        if (isset($out['user_msg'])) {
-            $u = (string)$out['user_msg'];
-            $out['user_msg_preview'] = mb_substr($u, 0, 120);
-            $out['user_msg_hash']    = hash('sha256', $u);
-            unset($out['user_msg']);
-        }
-
-        // Write to /site/assets/logs/chatai/chatai_metrics.txt
-        $config = $this->wire('config');
-        $files  = $this->wire('files');
-
-        $dir  = $config->paths->logs . 'chatai/';
-        $file = $dir . 'chatai_metrics.txt';
-
-        if (!is_dir($dir)) {
-            // ensures correct perms (uses $config->chmodDir)
-            $files->mkdir($dir, true);
-        }
-
-        // lightweight rotation (optional)
-        if (is_file($file) && filesize($file) > 5 * 1024 * 1024) { // 5 MB
-            @rename($file, $file . '.' . date('Ymd-His'));
-        }
-        file_put_contents($file, json_encode($out, JSON_UNESCAPED_SLASHES) . PHP_EOL, FILE_APPEND | LOCK_EX);
-    }*/
-
-
     // logs one compact event to chatai_obslog
     protected function obsLog($result, array $meta = []): void
     {
-        // 1) Config + sampling
-        $process = $this->wire('modules')->get('ProcessChatAI');
-        $cfg     = $process->loadPromptSettings();
-
-        if (empty($cfg['obs_enabled'])) return;
-
-        $sr = max(1, (int)($cfg['obs_sample_rate'] ?? 1));
-        if (mt_rand(1, $sr) !== 1) return;
-
-        // 2) Normalise result to array
+        // 1) Normalise result to array
         if (is_object($result)) {
             $result = json_decode(json_encode($result), true);
         }
         $result = is_array($result) ? $result : [];
 
-        // 3) Build core payload
+        // 2) Build core payload
         $ok      = (bool)($result['ok'] ?? false);
         $errCode = $result['error'] ?? null;
 
@@ -939,8 +923,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'event'    => $meta['event'] ?? 'reply',
             'ok'       => $ok,
             'err_code' => $errCode,
-            // 'answer_len' can stay out or be reintroduced later if needed
-            // 'answer_len' => isset($result['text']) ? strlen((string) $result['text']) : null,
         ];
 
         // Merge caller meta (latency, model, lang, etc)
@@ -948,15 +930,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $out[$k] = $v;
         }
 
-//        // 4) Privacy: hash + preview user_msg if provided
-//        if (isset($out['user_msg'])) {
-//            $u = (string) $out['user_msg'];
-//            $out['user_msg_preview'] = mb_substr($u, 0, 120);
-//            $out['user_msg_hash']    = hash('sha256', $u);
-//            unset($out['user_msg']);
-//        }
-
-        // 5) Map to obslog columns
+        // 3) Map to obslog columns
         $chatId    = isset($out['chat_id']) ? (string) $out['chat_id'] : '';
         $eventType = isset($out['event']) ? (string) $out['event'] : 'reply';
         $status    = $ok ? 'ok' : 'failed';
@@ -966,11 +940,14 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $metaForDb = $out;
         unset($metaForDb['t'], $metaForDb['event']);
 
-        // 6) Write to chatai_obslog via ChatAI service
+        // 4) Write to chatai_obslog via ChatAI service
         try {
-            /** @var \ProcessWire\ChatAI $chatAI */
+            /** @var \ProcessWire\ChatAI|null $chatAI */
             $chatAI = $this->wire('modules')->get('ChatAI');
+            if (!$chatAI || !method_exists($chatAI, 'getObsLog')) return;
+
             $logger = $chatAI->getObsLog();
+            if (!$logger) return;
 
             $logger->log($eventType, [
                 'chat_id' => $chatId,
@@ -978,15 +955,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'model'   => $model,
                 'meta'    => $metaForDb,
             ]);
+
         } catch (\Throwable $e) {
             // Final safety net: nothing here should ever break chat
             $this->wire('log')->save('chatai-obslog', $e->getMessage());
         }
     }
-
-
-
-
 
     /** @return array{preview:string, hash:string} */
     protected function previewAndHash(string $text, int $limit = 120): array
@@ -1071,13 +1045,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $errorMsg->warning = true;
                 break;
 
-            case 11: // no response (unused)
-                $errorMsg->msg = $this->_('No response');
+            case 11: // last question
+                $errorMsg->msg = $this->_('This chat has reached its limit. Please start a new chat to continue.');
                 break;
 
             case 12: // unexpected API response structure
                 $errorMsg->msg = $this->_('Unexpected API response structure.');
-                break; // <-- add this break
+                break; //
 
             case 13: // lockout due to repeated inappropriate messages
                 $errorMsg->msg = $this->_('You have been locked out due to repeated inappropriate messages.');

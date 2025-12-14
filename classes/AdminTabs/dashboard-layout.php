@@ -1,5 +1,14 @@
 <?php namespace ProcessWire;
 
+$periodDays    = isset($snapshot['period_days']) ? (int) $snapshot['period_days'] : (int) ($days ?? 7);
+$totalChats    = (int) ($snapshot['total_chats']    ?? 0);
+$totalMessages = (int) ($snapshot['total_messages'] ?? 0);
+$totalErrors   = (int) ($snapshot['total_failed']   ?? 0);
+$totalCutoffs  = (int) ($snapshot['total_cutoffs']  ?? 0);
+$totalBlocked  = (int) ($snapshot['total_blocked']  ?? 0);
+$rateLimited   = (int) ($snapshot['rate_limited']   ?? 0);
+
+
 $eventSummary = isset($eventSummary) && is_array($eventSummary) ? $eventSummary : [];
 $eventSummaryJson = json_encode($eventSummary, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
@@ -16,15 +25,15 @@ $volumeLabelsJson = json_encode($volumeLabels, JSON_UNESCAPED_UNICODE | JSON_UNE
 $volumeTotalsJson = json_encode($volumeTotals, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
 $dashboardConfig = [
-    'requestsLabel' => __('Requests'),
-    'todayLabel'    => __('Today'),
-    'last7Label'    => __('Last 7 days'),
-    'last30Label'   => __('Last 30 days'),
-    'volumeUrl'     => $page->url . '?api=volumeData',
+    'requestsLabel'   => __('Requests'),
+    'todayLabel'      => __('Today'),
+    'last7Label'      => __('Last 7 days'),
+    'last30Label'     => __('Last 30 days'),
+    'volumeUrl'       => $page->url . '?api=volumeData',
     'insightsUrl'     => $page->url . '?api=insights',
-    'obslogExportUrl' => $page->url . '?api=obslogExport'
+    'obslogExportUrl' => $page->url . '?api=obslogExport',
+    'kpiUrl'          => $page->url . '?api=kpiSnapshot'
 ];
-
 
 ?>
 <script>
@@ -72,27 +81,51 @@ $dashboardConfig = [
     <section class="chatai-dashboard-kpis" aria-label="ChatAI summary metrics">
         <div class="chatai-dashboard-kpi-grid">
             <article class="chatai-dashboard-kpi">
-                <h3><?=__('Chats (30 days)');?></h3>
-                <p class="chatai-dashboard-kpi-value">0</p>
-                <p class="chatai-dashboard-kpi-note"><?=('Awaiting data')?></p>
+                <h3><?= __('Chats'); ?></h3>
+                <p class="chatai-dashboard-kpi-value">
+                    <span id="kpi-chats"><?= $totalChats; ?></span>
+                </p>
+                <p class="chatai-dashboard-kpi-note">
+                    <span id="kpi-chats-note">
+                        <?= sprintf(__('in the last %d days'), $periodDays); ?>
+                    </span>
+                </p>
             </article>
+
             <article class="chatai-dashboard-kpi">
-                <h3><?=__('Messages')?></h3>
-                <p class="chatai-dashboard-kpi-value">0</p>
-                <p class="chatai-dashboard-kpi-note"><?=__('User and assistant')?></p>
+                <h3><?= __('Messages'); ?></h3>
+                <p class="chatai-dashboard-kpi-value">
+                    <span id="kpi-messages"><?= $totalMessages; ?></span>
+                </p>
             </article>
+
             <article class="chatai-dashboard-kpi">
-                <h3><?=__('Errors / Cutoffs')?></h3>
-                <p class="chatai-dashboard-kpi-value">0</p>
-                <p class="chatai-dashboard-kpi-note"><?=$dashboardConfig['last30Label']?></p>
+                <h3><?= __('Errors / Cutoffs'); ?></h3>
+                <p class="chatai-dashboard-kpi-value">
+                    <span id="kpi-errors-cutoffs"><?= $totalErrors + $totalCutoffs; ?></span>
+                </p>
+                <p class="chatai-dashboard-kpi-note">
+                    <span id="kpi-errors-cutoffs-note">
+                        <?= sprintf(__('Errors: %d, cutoffs: %d'), $totalErrors, $totalCutoffs); ?>
+                    </span>
+                </p>
             </article>
+
             <article class="chatai-dashboard-kpi">
-                <h3><?=__('Blocked / Rate limited')?></h3>
-                <p class="chatai-dashboard-kpi-value">0</p>
-                <p class="chatai-dashboard-kpi-note"><?=__('Blacklist and limits')?></p>
+                <h3><?= __('Blocked / Rate limited'); ?></h3>
+                <p class="chatai-dashboard-kpi-value">
+                    <span id="kpi-blocked"><?= $totalBlocked; ?></span>
+                </p>
+                <p class="chatai-dashboard-kpi-note">
+                    <span id="kpi-blocked-note">
+                        <?= sprintf(__('Blocked: %d, rate limited: %d'), $totalBlocked, $rateLimited); ?>
+                    </span>
+                </p>
             </article>
         </div>
     </section>
+
+
 
     <section class="chatai-dashboard-row" aria-label="ChatAI charts">
         <div class="chatai-dashboard-chart">

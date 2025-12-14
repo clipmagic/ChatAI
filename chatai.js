@@ -1,5 +1,45 @@
+// chatai.js - frontend widget
+/*
+|--------------------------------------------------------------------------
+| Message limit & warning flow (OpenAI-call based)
+|--------------------------------------------------------------------------
+|
+| Important: The message limit ONLY applies to requests that actually
+| go to OpenAI. Small talk, blacklist warnings, and other local replies
+| do NOT consume credits.
+|
+| Credit consumption happens server-side and is returned in the API
+| response meta (count / remaining / stop).
+|
+| Priority order (highest → lowest):
+|
+| 1. Cutoff
+|    - Occurs when OpenAI response is truncated.
+|    - Always takes precedence over near-limit warnings.
+|    - Uses dedicated cutoff styling.
+|    - Input is removed/disabled.
+|
+| 2. Hard limit reached (Error 4 / 11)
+|    - Triggered when remaining === 0.
+|    - Displays final message and disables input.
+|
+| 3. Near-limit warning (Error 10)
+|    - Triggered when remaining === 1.
+|    - Rendered as a warning bubble BELOW the bot reply.
+|    - Input remains enabled.
+|
+| 4. Normal reply
+|    - No warnings.
+|
+| Frontend must NOT infer limits itself.
+| It only reacts to explicit error metadata from the API.
+|
+|--------------------------------------------------------------------------
+*/
+
 // client-side transcript persistence (per tab)
 const CHAT_KEY = 'chatai:thread';
+const CHAT_API_URL = '/chatai-api/';
 const chataiStore = {
     load() {
         try { return JSON.parse(sessionStorage.getItem(CHAT_KEY) || '[]'); } catch { return []; }
@@ -12,7 +52,31 @@ const chataiStore = {
         arr.push(rec);
         chataiStore.save(arr);
     },
-    clear() { try { sessionStorage.removeItem(CHAT_KEY); } catch {} }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Reset chat
+    |--------------------------------------------------------------------------
+    |
+    | Clears:
+    | - Frontend sessionStorage (conversation history, UI state)
+    | - PHP session data via API (message counter, strikes, etc.)
+    |
+    | After reset, the next message MUST behave as a fresh session:
+    | no residual warnings, no premature limits.
+    |
+    |--------------------------------------------------------------------------
+    */
+
+    clear() {
+        try { sessionStorage.removeItem(CHAT_KEY); } catch {}
+        // try {
+        //     fetch(CHAT_API_URL + '?reset=1', {
+        //         method: 'GET',
+        //         credentials: 'same-origin'
+        //     });
+        // } catch {}
+    }
 };
 
 let chatai = {
@@ -31,52 +95,21 @@ let chatai = {
         return json;
     },
 
-    isNearLimitWarning: (err) => {
-        return !!(err && err.warning === true && ((parseInt(err.number) === 10) || parseInt(err.number) === 4));
+
+    /*
+     * Detects a "near limit" warning (Error 10).
+     *
+     * This is intentionally separate from hard-stop errors.
+     * A warning bubble should be rendered without disabling input.
+     *
+     * Do NOT treat warning === true as a stop condition.
+     */
+        isNearLimitWarning: (err) => {
+        if (!err) return false;
+        const n = parseInt(err.number, 10);
+        return err.warning === true && n === 10;
     },
 
-
-  /*  appendMessage: (role, obj) => {
-        const messages = document.getElementById('chatbot-messages');
-        const msg = document.createElement('div');
-        msg.className = 'chatbot-msg ' + role;
-        //if (obj?.error?.warning) msg.classList.add('chatbot-warning');
-
-        // Only style as warning if this bubble is an error-only bubble
-        const hasReply = (typeof obj?.reply === 'string') || (obj?.reply?.msg);
-        if (!hasReply && (obj?.error?.warning || obj?.blacklisted === true)) {
-            msg.classList.add('chatbot-warning');
-        }
-
-        let text;
-        if (typeof obj === 'string' && role === 'user') text = obj;
-        else if (typeof obj?.reply === 'string') text = obj.reply;     // reply first
-        else if (obj?.reply?.msg) text = obj.reply.msg; // legacy
-        else if (obj?.error?.msg) text = obj.error.msg; // error last
-        else if (typeof obj === 'string') text = obj;
-        else text = '…';
-
-        msg.textContent = text; // safe default (no HTML)
-
-        // Optional: show name label only when no HTML is being rendered
-        if (obj?.name && !obj.html) {
-            const name = document.createElement('div');
-            name.className = 'chatbot-name';
-            name.textContent = obj.name;
-            messages.append(name);
-        }
-        messages.append(msg);
-        messages.scrollTop = messages.scrollHeight;
-
-        chataiStore.push({
-            role,
-            type: 'text',
-            name: obj?.name || null,
-            content: msg.textContent,
-            warning: !!(obj?.error?.warning && obj?.blacklisted !== true)
-        });
-    },
-*/
 
     appendMessage: (role, obj) => {
         const messages = document.getElementById('chatbot-messages');
@@ -163,8 +196,18 @@ let chatai = {
         } catch {
         }
 
-        document.querySelector('.chatai-reset')?.addEventListener('click', (e) => {
-            e.preventDefault()
+        document.querySelector('.chatai-reset')?.addEventListener('click', async (e) => {
+            e.preventDefault();
+
+            try {
+                // Ensure server-side session is cleared too
+                const url = (window.CHATAI_API_URL || '/chatai-api/') + '?action=reset';
+                await fetch(url, { method: 'POST', credentials: 'same-origin' });
+            } catch (err) {
+                console.warn('ChatAI: reset API failed', err);
+                // Still proceed with local reset
+            }
+
             chataiStore.clear();
             location.reload();
         });
@@ -279,12 +322,16 @@ let chatai = {
                     }
                     // Lockout still takes priority
                     if (res.stop === true) {
-                        chatai.appendMessage('bot', res, chataiStore);
-                        chatai.appendMessage('bot', { name: res.name, error: res.error }, chataiStore);
-                        if (res.stop) {
-                            document.querySelector('.chatbot-form')?.remove();
-                            chataiStore.clear();
+                        // Show any final message (reply/html) plus the stop error bubble, then disable input.
+                        if (typeof res.html === 'string' && res.html.trim()) {
+                            chatai.appendHTML('bot', res.html, res.name);
+                        } else if (typeof res.reply === 'string' && res.reply.trim()) {
+                            chatai.appendMessage('bot', { name: res.name, reply: res.reply });
                         }
+                        if (res.error) {
+                            chatai.appendMessage('bot', { name: res.name, error: res.error });
+                        }
+                        document.querySelector('.chatbot-form')?.remove();
                         setBusy(false);
                         return;
                     }
@@ -292,13 +339,19 @@ let chatai = {
                     // 1) Prefer HTML
                     if (typeof res.html === 'string' && res.html.trim()) {
                         chatai.appendHTML('bot', res.html, res.name);
+
+                        // Near-limit warning (#10): render as a separate warning bubble (do not disable input)
+                        if (chatai.isNearLimitWarning(res.error)) {
+                            chatai.appendMessage('bot', { name: res.name, error: res.error });
+                        }
                     }
                     // 2) Plain reply
                     else if (typeof res.reply === 'string' && res.reply.trim()) {
                         chatai.appendMessage('bot', { name: res.name, reply: res.reply });
 
-                        // If this is the near-limit warning (#10), append another bubble
-                        if (res.error && res.error.warning === true && res.error.number === 10) {
+                        // Near-limit warning (#10): render as a separate warning bubble (do not disable input)
+
+                        if (chatai.isNearLimitWarning(res.error)) {
                             chatai.appendMessage('bot', { name: res.name, error: res.error });
                         }
                     }

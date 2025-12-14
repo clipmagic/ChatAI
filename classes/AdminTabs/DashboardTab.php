@@ -72,13 +72,17 @@ class DashboardTab
         // --- Dashboard layout / charts ---
         if(file_exists(__DIR__ .'/dashboard-layout.php')) {
             $files  = \ProcessWire\wire('files');
+            $input  = \ProcessWire\wire('input');
             $view   = __DIR__ . '/dashboard-layout.php';
 
-            // pull event summary + volume data from obslog
+            $days = (int) $input->get('days') ?: 7;
+            $days = max(1, min($days, 60));
+
             $eventSummary = [];
             $volumeData   = [];
-            $chatAI       = $m->get('ChatAI');
+            $snapshot     = [];
 
+            $chatAI       = $m->get('ChatAI');
             if($chatAI && method_exists($chatAI, 'getObsLog')) {
                 $logger = $chatAI->getObsLog();
 
@@ -89,6 +93,9 @@ class DashboardTab
                     $days       = 7;
                     $volumeData = $logger->fetchDailyVolume($days);
                 }
+                if (method_exists($logger, 'buildInsightsSnapshot')) {
+                    $snapshot = $logger->buildInsightsSnapshot($days);
+                }
             }
 
             $content = $files->render(
@@ -96,7 +103,9 @@ class DashboardTab
                 [
                     'eventSummary' => $eventSummary,
                     'volumeData'   => $volumeData,
-                    'page'         => $chatAI ? $chatAI->wire('page') : \ProcessWire\wire('page')
+                    'snapshot'     => $snapshot,
+                    'days'         => $days,
+                    'page'         => $chatAI ? $chatAI->wire('page') : \ProcessWire\wire('page'),
                 ],
                 ['allowedPaths' => [__DIR__ . '/']]
             );
@@ -112,6 +121,7 @@ class DashboardTab
         $chatprocess = $m->get('ProcessChatAI');
         $insights = $m->get('InputfieldMarkup');
         $insights->label = $m->_('Insights');
+        $insights->attr('id', 'chatai-dashboard-insights');
         $json = json_decode($chatprocess->renderInsightsJson());
         $insights->value = $json->html ?? '';
         $inputfields->add($insights);
