@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (!s) return;
 
                 setText('kpi-chats', s.total_chats);
-                setText('kpi-chats-note',  `in the last ${s.period_days} days`);
+                setText('kpi-chats-note',  `in the last ${s.range_days} days`);
 
                 setText('kpi-messages', s.total_messages);
 

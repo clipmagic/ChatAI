@@ -301,6 +301,7 @@ class ProcessChatAI extends Process
 
     protected function renderInsightsJson(): string
     {
+        $cfg = $this->loadPromptSettings();
         $input = $this->wire('input');
         $days  = (int) $input->get('days') ?: 7;
         $days  = max(1, min($days, 60));
@@ -338,9 +339,9 @@ class ProcessChatAI extends Process
         $snapshot['range_days'] = (int) ($snapshot['range_days'] ?? $days);
 
         $san  = $this->wire('sanitizer');
-        $tips = $logger->buildHeuristicInsights($snapshot);
+        $tips = $logger->buildHeuristicInsights($snapshot, $cfg);
 
-        $periodDays   = (int) ($snapshot['range_days'] ?? $snapshot['period_days'] ?? $days);
+        $rangeDays   = (int) ($snapshot['range_days'] ??  $days);
         $totalEvents  = (int) ($snapshot['total_events'] ?? 0);
         $successLabel = isset($snapshot['success_rate'])
             ? ((int) round($snapshot['success_rate'] * 100)) . '%'
@@ -352,7 +353,7 @@ class ProcessChatAI extends Process
         $html  = '<p class="chatai-dashboard-muted">';
         $html .= sprintf(
             $this->_('Last %d days. Total events: %d. Success rate: %s. Average latency: %s.'),
-            $periodDays,
+            $rangeDays,
             $totalEvents,
             $successLabel,
             $latencyLabel

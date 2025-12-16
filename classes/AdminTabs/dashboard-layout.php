@@ -1,6 +1,6 @@
 <?php namespace ProcessWire;
 
-$periodDays    = isset($snapshot['period_days']) ? (int) $snapshot['period_days'] : (int) ($days ?? 7);
+$rangeDays    = isset($snapshot['range_days']) ? (int) $snapshot['range_days'] : (int) ($days ?? 7);
 $totalChats    = (int) ($snapshot['total_chats']    ?? 0);
 $totalMessages = (int) ($snapshot['total_messages'] ?? 0);
 $totalErrors   = (int) ($snapshot['total_failed']   ?? 0);
@@ -93,7 +93,7 @@ $dashboardConfig = [
                 </p>
                 <p class="chatai-dashboard-kpi-note">
                     <span id="kpi-chats-note">
-                        <?= sprintf(__('in the last %d days'), $periodDays); ?>
+                        <?= sprintf(__('in the last %d days'), $rangeDays); ?>
                     </span>
                 </p>
             </article>

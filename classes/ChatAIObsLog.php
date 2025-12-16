@@ -197,7 +197,7 @@ class ChatAIObsLog extends Wire
      * Simple rule based recommendations based on a snapshot.
      * Returns plain text bullet items.
      */
-    public function buildHeuristicInsights(array $snapshot): array
+    public function buildHeuristicInsights(array $snapshot, array $cfg): array
     {
         $out = [];
 
@@ -215,12 +215,14 @@ class ChatAIObsLog extends Wire
         $rangeDays        = (int) ($snapshot['range_days'] ?? 0);      // optional, for wording
 
         // KPI thresholds (with sane defaults)
-        $successWarn = (int) ($snapshot['success_warn_pct'] ?? 85);    // warn below this %
-        $latWarn     = (int) ($snapshot['latency_warn_ms']   ?? 5000); // "a bit slow"
-        $latHigh     = (int) ($snapshot['latency_high_ms']   ?? 8000); // "too slow"
+        $successWarn = (int) ($cfg['obs_kpi_success_warn_pct'] ?? 85);    // warn below this %
+        $latWarn     = (int) ($cfg['obs_kpi_latency_warn_ms']   ?? 5000); // "a bit slow"
+        $latHigh     = (int) ($cfg['obs_kpi_latency_high_ms']   ?? 8000); // "too slow"
 
+        bd($cfg);
+        
         // Helper label for the period
-        $periodLabel = $rangeDays > 0
+        $rangeLabel = $rangeDays > 0
             ? sprintf($this->_('the last %d days'), $rangeDays)
             : $this->_('the selected period');
 
@@ -234,19 +236,19 @@ class ChatAIObsLog extends Wire
             $out[] = sprintf(
                 $this->_('Only %d events were logged in %s. Treat the charts and insights as early signals rather than stable trends.'),
                 $totalEvents,
-                $periodLabel
+                $rangeLabel
             );
         } elseif ($totalEvents < 50) {
             $out[] = sprintf(
                 $this->_('%d events were logged in %s. Patterns are emerging, but a larger sample will give more reliable trends.'),
                 $totalEvents,
-                $periodLabel
+                $rangeLabel
             );
         } else {
             $out[] = sprintf(
                 $this->_('%d events were logged in %s. This is enough traffic to rely on the trends shown in the charts.'),
                 $totalEvents,
-                $periodLabel
+                $rangeLabel
             );
         }
 
@@ -257,13 +259,13 @@ class ChatAIObsLog extends Wire
                     $this->_('%d requests were blocked from %d different IP addresses in %s. Review your blacklist terms to ensure they are not too aggressive.'),
                     $totalBlocked,
                     $uniqueBlockedIps,
-                    $periodLabel
+                    $rangeLabel
                 );
             } else {
                 $out[] = sprintf(
                     $this->_('%d requests were blocked in %s. Check the blacklist terms and confirm they match the behaviour you want to prevent.'),
                     $totalBlocked,
-                    $periodLabel
+                    $rangeLabel
                 );
             }
         }
@@ -273,7 +275,7 @@ class ChatAIObsLog extends Wire
             $out[] = sprintf(
                 $this->_('There were %d truncated replies in %s. Consider increasing the max tokens or trimming the system prompt so responses fit comfortably within the limit.'),
                 $totalCutoffs,
-                $periodLabel
+                $rangeLabel
             );
         }
 
@@ -287,7 +289,7 @@ class ChatAIObsLog extends Wire
                 $out[] = sprintf(
                     $this->_('The success rate is about %d%% in %s, which is below your target of %d%%. Review failed and blocked events in the CSV export to see what users are asking for.'),
                     $pct,
-                    $periodLabel,
+                    $rangeLabel,
                     $successWarn
                 );
             } elseif ($pct < $successWarn) {
@@ -295,7 +297,7 @@ class ChatAIObsLog extends Wire
                 $out[] = sprintf(
                     $this->_('The success rate is about %d%% in %s, slightly below your target of %d%%. Keep an eye on repeated errors and consider tightening prompts for common failure cases.'),
                     $pct,
-                    $periodLabel,
+                    $rangeLabel,
                     $successWarn
                 );
             } elseif ($pct >= min($successWarn + 10, 99)) {
@@ -303,7 +305,7 @@ class ChatAIObsLog extends Wire
                 $out[] = sprintf(
                     $this->_('The success rate is about %d%% in %s, above your configured target. You can focus on fine tuning prompt wording and canned responses to improve answer quality.'),
                     $pct,
-                    $periodLabel
+                    $rangeLabel
                 );
             }
         }
@@ -314,13 +316,13 @@ class ChatAIObsLog extends Wire
                 $out[] = sprintf(
                     $this->_('Average response time is around %d ms in %s, which is above your high-latency threshold. Users are likely to perceive the bot as slow. Consider a smaller or faster model, a shorter prompt, or checking network latency.'),
                     (int) $avgLatency,
-                    $periodLabel
+                    $rangeLabel
                 );
             } elseif ($avgLatency > $latWarn) {
                 $out[] = sprintf(
                     $this->_('Average response time is around %d ms in %s, above your warning threshold. If possible, trim unnecessary context and confirm the server and network have enough capacity.'),
                     (int) $avgLatency,
-                    $periodLabel
+                    $rangeLabel
                 );
             } else {
                 // Only bother praising latency if you also have a reasonable number of events
@@ -328,7 +330,7 @@ class ChatAIObsLog extends Wire
                     $out[] = sprintf(
                         $this->_('Average response time is around %d ms in %s, within your configured latency thresholds.'),
                         (int) $avgLatency,
-                        $periodLabel
+                        $rangeLabel
                     );
                 }
             }
@@ -470,7 +472,7 @@ class ChatAIObsLog extends Wire
         arsort($topErrorCodes);
 
         return [
-            'period_days'        => $days,
+            'range_days'        => $days,
             'total_events'       => $totalEvents,
             'total_success'      => $totalSuccess,
             'total_failed'       => $totalFailed,
