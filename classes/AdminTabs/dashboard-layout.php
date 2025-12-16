@@ -29,10 +29,16 @@ $dashboardConfig = [
     'todayLabel'      => __('Today'),
     'last7Label'      => __('Last 7 days'),
     'last30Label'     => __('Last 30 days'),
+    'replyLabel'      => __('Replies'),
+    'cutoffLabel'    => __('Cutoffs'),
+    'blockedLabel'    => __('Blocked'),
+    'rateLimitedLabel'    => __('Rate limited'),
+    'noDataLabel'    => __('No data'),
+
     'volumeUrl'       => $page->url . '?api=volumeData',
     'insightsUrl'     => $page->url . '?api=insights',
     'obslogExportUrl' => $page->url . '?api=obslogExport',
-    'kpiUrl'          => $page->url . '?api=kpiSnapshot'
+    'kpiUrl'          => $page->url . '?api=kpiSnapshot',
 ];
 
 ?>

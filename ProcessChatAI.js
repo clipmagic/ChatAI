@@ -17,6 +17,10 @@ document.addEventListener('DOMContentLoaded', function () {
     if (typeof Chart === 'undefined') return;
     var hasChart = (typeof Chart !== 'undefined');
 
+    var eventsChart = null;
+    var elEvents = document.getElementById('chatai-chart-events');
+
+
     var t = window.chatAIDashboard || {};
 
 
@@ -39,17 +43,31 @@ document.addEventListener('DOMContentLoaded', function () {
                 return res.json();
             })
             .then(function(s) {
+                console.log(s)
+
                 if (!s) return;
 
-                setText('chatai-kpi-chats', s.total_chats);
-                setText('chatai-kpi-messages', s.total_messages);
+                setText('kpi-chats', s.total_chats);
+                setText('kpi-chats-note',  `in the last ${s.period_days} days`);
+
+                setText('kpi-messages', s.total_messages);
 
                 var ec = (parseInt(s.total_errors || 0, 10) + parseInt(s.total_cutoffs || 0, 10));
-                setText('chatai-kpi-errorsCutoffs', ec);
-                setText('chatai-kpi-errorsCutoffsNote', 'Errors: ' + (s.total_errors || 0) + ', cutoffs: ' + (s.total_cutoffs || 0));
+                setText('kpi-errors-cutoffs', ec);
+                setText('kpi-errors-cutoffs-note', 'Errors: ' + (s.total_errors || 0) + ', cutoffs: ' + (s.total_cutoffs || 0));
 
-                setText('chatai-kpi-blocked', s.total_blocked || 0);
-                setText('chatai-kpi-blockedNote', 'Blocked: ' + (s.total_blocked || 0) + ', rate limited: ' + (s.rate_limited || 0));
+                setText('kpi-blocked', s.total_blocked || 0);
+                setText('kpi-blocked-note', 'Blocked: ' + (s.total_blocked || 0) + ', rate limited: ' + (s.rate_limited || 0));
+
+
+                updateEventsChart({
+                    reply:      s.total_replies,
+                    cutoff:     s.total_cutoffs,
+                    blocked:    s.total_blocked,
+                    rate_limit: s.rate_limited
+                });
+
+
             })
             .catch(function(err) {
                 console.error('ChatAI: failed to load KPI snapshot:', err);
@@ -114,6 +132,88 @@ document.addEventListener('DOMContentLoaded', function () {
             .catch(function (err) {
                 console.error('ChatAI: failed to load volume data:', err);
             });
+    }
+
+    var eventsChart = null;
+
+    function normalizeEventSummary(summary) {
+        summary = summary || {};
+        return {
+            reply:      parseInt(summary.reply, 10) || 0,
+            cutoff:     parseInt(summary.cutoff, 10) || 0,
+            blocked:    parseInt(summary.blocked, 10) || 0,
+            rate_limit: parseInt(summary.rate_limit, 10) || 0
+        };
+    }
+
+    function mapEventLabel(key) {
+        if (key === 'reply')      return t.replyLabel || 'Replies';
+        if (key === 'cutoff')     return t.cutoffLabel || 'Cutoffs';
+        if (key === 'blocked')    return t.blockedLabel || 'Blocked';
+        if (key === 'rate_limit') return t.rateLimitedLabel || 'Rate limited';
+        if (key === 'no_data')    return t.noDataLabel || 'No data';
+        return key;
+    }
+
+    function updateEventsChart(summary) {
+        if (typeof Chart === 'undefined') return;
+
+        var eventsCanvas = document.getElementById('chatai-chart-events');
+        if (!eventsCanvas) return;
+
+        var ctx = eventsCanvas.getContext('2d');
+        var s = normalizeEventSummary(summary);
+
+        // Stable order
+        var keys = ['reply', 'cutoff', 'blocked', 'rate_limit'];
+        var values = keys.map(function (k) { return s[k] || 0; });
+
+        var hasAny = values.some(function (v) { return v > 0; });
+
+        // Use DISPLAY labels in chart.data.labels so the legend is correct with zero custom logic
+        var finalKeys   = hasAny ? keys : ['no_data'];
+        var finalLabels = finalKeys.map(function (k) { return mapEventLabel(k); });
+        var finalValues = hasAny ? values : [1];
+
+        if (!eventsChart) {
+            eventsChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: finalLabels,
+                    datasets: [{
+                        data: finalValues
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '60%',
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'right'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                // Keep tooltips tidy in the "no data" case
+                                label: function (ctx) {
+                                    if (!hasAny) return mapEventLabel('no_data');
+                                    var label = (ctx.label != null) ? String(ctx.label) : '';
+                                    var val = (ctx.raw != null) ? ctx.raw : '';
+                                    return label + ': ' + val;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+            return;
+        }
+
+        // Update existing
+        eventsChart.data.labels = finalLabels;
+        eventsChart.data.datasets[0].data = finalValues;
+        eventsChart.update();
     }
 
     function reloadInsights(days) {
@@ -183,61 +283,8 @@ document.addEventListener('DOMContentLoaded', function () {
         reloadInsights(initialDays);
     }
 
-    // Event types doughnut chart
-    var eventsCanvas = document.getElementById('chatai-chart-events');
-    if (hasChart && eventsCanvas) {
-        var ctx = eventsCanvas.getContext('2d');
-
-        var summary = window.chatAIEventSummary || {};
-        var eventLabels = Object.keys(summary);
-        var values = eventLabels.map(function (label) { return summary[label]; });
-
-        // Fallback if no data yet
-        var finalLabels = eventLabels.length ? eventLabels : ['no data'];
-        var finalValues = eventLabels.length ? values : [1];
-
-        new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: finalLabels,
-                datasets: [{
-                    data: finalValues
-                    // backgroundColor etc. can be defined here if desired
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: {
-                        position: 'right'
-                    }
-                },
-
-                labels: {
-                    // optional: map type keys to translated labels
-                    generateLabels: function (chart) {
-                        var data = chart.data;
-                        if (!data.labels.length) {
-                            return Chart.defaults.plugins.legend.labels.generateLabels(chart);
-                        }
-                        return data.labels.map(function (label, i) {
-                            var text = label;
-                            if (label === 'reply')   text = t.replyLabel   || 'Replies';
-                            if (label === 'cutoff')  text = t.cutoffLabel  || 'Cutoffs';
-                            if (label === 'blocked') text = t.blockedLabel || 'Blocked';
-
-                            var style = Chart.defaults.plugins.legend.labels.generateLabels(chart)[i];
-                            style.text = text;
-                            return style;
-                        });
-                    }
-                },
-                cutout: '60%'
-            }
-        });
-    }
-
+    // Event types doughnut chart (initial render)
+    updateEventsChart(window.chatAIEventSummary || {});
 
     // CSV export based on current range
     var exportBtn = document.querySelector('.chatai-dashboard-export-csv');

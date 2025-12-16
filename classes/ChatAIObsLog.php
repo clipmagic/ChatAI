@@ -484,6 +484,13 @@ class ChatAIObsLog extends Wire
             'unique_blocked_ips' => count($blockedIps),
             'top_error_codes'    => $topErrorCodes,
             'rate_limited'       => $rateLimited,
+            'event_summary' => [
+                'reply'      => $totalReplies,
+                'cutoff'     => $totalCutoffs,
+                'blocked'    => $totalBlocked,
+                'rate_limit' => $rateLimited,
+            ],
+
         ];
     }
 

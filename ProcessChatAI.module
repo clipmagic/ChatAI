@@ -251,6 +251,26 @@ class ProcessChatAI extends Process
 
 
 
+    protected function renderKpiSnapshotJson(): string
+    {
+        $input = $this->wire('input');
+
+        $days = (int) $input->get('days') ?: 7;
+        $days = max(1, min($days, 30)); // clamp to 1–30
+
+        $kpis = '';
+
+        $chatAI = $this->wire('modules')->get('ChatAI');
+        if ($chatAI && method_exists($chatAI, 'getObsLog')) {
+            $logger = $chatAI->getObsLog();
+            if ($logger && method_exists($logger, 'buildInsightsSnapshot')) {
+                $kpis = $logger->buildInsightsSnapshot($days);
+            }
+        }
+        return json_encode($kpis);
+    }
+
+
     protected function renderVolumeDataJson(): string
     {
         $input = $this->wire('input');
@@ -480,6 +500,12 @@ class ProcessChatAI extends Process
             exit;
         }
 
+        if ($api === 'kpiSnapshot') {
+            header('Content-Type: application/json; charset=utf-8');
+            echo $this->renderKpiSnapshotJson();
+            exit;
+        }
+
 
 
         $this->wire('modules')->get('JqueryWireTabs');
@@ -491,7 +517,7 @@ class ProcessChatAI extends Process
         $this->config->styles->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.css');
         $this->config->scripts->add($this->config->urls->ProcessChatAI . 'ProcessChatAI.js');
         // Chart.js from CDN (simple and proven)
-        $this->config->scripts->add('https://cdn.jsdelivr.net/npm/chart.js');
+        $this->config->scripts->add('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js');
 
 
         $this->values = $this->loadPromptSettings();
