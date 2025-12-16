@@ -5,6 +5,7 @@
 }
 
 .chatai-dashboard {
+    container-type: inline-size;
     font-size: 14px;
     line-height: 1.5;
     color: #222;
@@ -93,6 +94,18 @@
     margin-bottom: 0.5rem;
 }
 
+@container (max-width: 520px) {
+    .chatai-dashboard-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.25rem;
+    }
+
+    .chatai-dashboard-header .chatai-dashboard-date-range {
+        align-self: flex-start;
+    }
+}
+
 .chatai-dashboard-chart h3 {
     margin: 0;
     font-size: 0.95rem;
@@ -114,9 +127,10 @@
 }
 
 .chatai-range-picker {
-    display: flex;
-    align-items: center;
+    display: grid;
     gap: 0.75rem;
+    grid-template-columns: repeat(4, 1fr);
+    place-items: center;
 }
 
 .chatai-range-label {
@@ -130,6 +144,11 @@
     font-size: 0.9em;
     background: #f1f4fb;
     color: #203040;
+    display: block;
+    width: 100%;
+    min-height: 100%;
+    align-content: center;
+    text-align: center;
 }
 
 .chatai-range-link:hover {
