@@ -218,8 +218,6 @@ class ChatAIObsLog extends Wire
         $successWarn = (int) ($cfg['obs_kpi_success_warn_pct'] ?? 85);    // warn below this %
         $latWarn     = (int) ($cfg['obs_kpi_latency_warn_ms']   ?? 5000); // "a bit slow"
         $latHigh     = (int) ($cfg['obs_kpi_latency_high_ms']   ?? 8000); // "too slow"
-
-        bd($cfg);
         
         // Helper label for the period
         $rangeLabel = $rangeDays > 0
