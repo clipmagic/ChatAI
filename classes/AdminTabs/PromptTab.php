@@ -46,7 +46,7 @@ class PromptTab
         $f->setOptions($options);
         $f->required(1);
         $value = isset($data['autogen']) && $data['autogen'] === '0' ? '0'  : '1';
-        $f->attr('value', $value);
+        $f->val($value);
         $inputfields->add($f);
 
 
@@ -61,7 +61,7 @@ class PromptTab
         $f->attr('name+id', 'use_blacklist');
         $f->label( $m->_('Use blacklist'));
         $value = empty($data['use_blacklist']) ? null : 1;
-        $f->attr('value', $value);
+        $f->val($value);
         if($value === 1)
             $f->attr('checked', 'checked');
         $fieldset->add($f);
@@ -75,7 +75,7 @@ class PromptTab
 
         $f->showIf('use_blacklist=1');
         $value = $data['blacklist'] ?? $m->_("answer my exam,bomb,buy drugs,cheat,cocaine,ddos,drugs,ecstasy,erotic,exploit,fetish,generate code for me,gun,hack,heroin,how to jailbreak,kill,lsd,marijuana,masturbate,meth,murder,naked,nude,onlyfans,orgasm,penis,porn,proxy,prompt injection,rape,sex,shoot,shell,solve my homework,sql injection,stab,strip,suicide,terrorist,torrent,vagina,violence,vpn,weed,who won the war,write my essay,xxx,xss");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->notes($m->_('Add or remove terms as needed'));
         $f->stripTags = true;
         $fieldset->add($f);
@@ -98,7 +98,7 @@ class PromptTab
         $f->notes($m->_("Optional extra information"));
         $f->showIf('autogen=1');
         $value = $data['autohint'] ?? $m->_($hint);
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
 
         $inputfields->add($f);
@@ -136,7 +136,7 @@ class PromptTab
         $f->attr('name+id', 'allowed_tags');
         $f->label($m->_("Allowed HTML tags"));
         $value = $data['allowed_tags'] ?? 'p,ul,li,ol,strong,em,code,br,a[href]';
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $f->columnWidth(60);
         $f->notes = $m->_("Comma separated list of HTML tags allowed in the Chatbot reply, eg: p,ul,li,ol,strong,em,code,br,a[href]");
@@ -149,7 +149,7 @@ class PromptTab
         $f->label($m->_('Max number of page links'));
         $f->notes("");
         $value = $data['context_limit'] ?? 12;
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $f->columnWidth(20);
         $fieldset->add($f);
@@ -160,7 +160,7 @@ class PromptTab
         $f->label($m->_('Response approx words'));
         $f->notes("");
         $value = $data['context_snippet_len'] ?? 400;
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $f->columnWidth(20);
         $fieldset->add($f);
@@ -178,7 +178,7 @@ class PromptTab
         $f->label($m->_('Selectors to include'));
         $f->notes($m->_("Comma separated list of selectors with high-value content to use when building dictionary"));
         $value = $data['rag_candidate_selectors'] ?? "article, [role='main'], .content, .page-content, .entry-content, .post-content, #content";
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $f->columnWidth(50);
         $fieldset->add($f);
@@ -189,7 +189,7 @@ class PromptTab
         $f->label($m->_('Exclude content within these selectors'));
         $f->notes($m->_("Comma separated list of selectors to exclude when building dictionary"));
         $value = $data['rag_exclude_selectors'] ?? "#chatbot-toggle, #chatbot-dialog, header, footer, nav, aside, form[role='search'], [role='banner'], [role='navigation'], [role='contentinfo'], .sidebar, .breadcrumbs, .menu, .mega-menu, .toolbar, .cookie, .consent, .newsletter, .promo, .ad, .related, .share, .social, #header, #footer";
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $f->columnWidth(50);
         $fieldset->add($f);
@@ -214,7 +214,7 @@ class PromptTab
         $f->notes($m->_("Give your bot guidance on how it should respond."));
         $f->showIf('autogen=0');
         $value = !empty($data['custom_prompt']) ? $data['custom_prompt'] : 'Write your own prompt';
-        $f->attr('value', $value);
+        $f->val($value);
         $f->required(1);
         $f->requiredIf('autogen=0');
         $f->stripTags = true;

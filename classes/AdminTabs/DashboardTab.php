@@ -114,7 +114,7 @@ class DashboardTab
         }
 
         $markUp = $m->get('InputfieldMarkup');
-        $markUp->attr('value', $content);
+        $markUp->val($content);
         $inputfields->add($markUp);
 
         // --- Insights (read-only) ---

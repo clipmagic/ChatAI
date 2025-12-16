@@ -45,7 +45,7 @@ class PersonaliseTab
         $f->columnWidth(40);
         $f->useLanguages = true;
         $value = $data['botname'] ?? 'Fred';
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -56,7 +56,7 @@ class PersonaliseTab
         $f->columnWidth(60);
         $f->useLanguages = true;
         $value = $data['botintro'] ?? $m->_("Hello! My name is {botname}. I can help you find information and pages on this site. What topic are you interested in?");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
         $inputfields->add($fieldset);
@@ -69,7 +69,7 @@ class PersonaliseTab
         $f->attr('name', 'botrole');
         $f->label($m->_('Role'));
         $value = $data['botrole'] ??  $m->_('a friendly and helpful site guide.');
-        $f->attr('value', $value);
+        $f->val($value);
 
         $f->columnWidth(30);
         $f->stripTags = true;
@@ -80,7 +80,7 @@ class PersonaliseTab
         $f->attr('name+id', 'bizname');
         $f->label($m->_('Employer'));
         $value = $data['bizname'] ?? '';
-        $f->attr('value', $value);
+        $f->val($value);
         $f->columnWidth(20);
         $f->stripTags = true;
         $fieldset->add($f);
@@ -90,7 +90,7 @@ class PersonaliseTab
         $f->name('tone');
         $f->label($m->_('Tone of the answers'));
         $value = $data['tone'] ?? $m->_('friendly and professional');
-        $f->attr('value', $value);
+        $f->val($value);
         $f->columnWidth(30);
         $f->stripTags = true;
         $fieldset->add($f);
@@ -109,7 +109,7 @@ class PersonaliseTab
         $f->columnWidth(50);
         $f->useLanguages = true;
         $value = $data['input_placeholder'] ?? $m->_("Ask a question...");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -119,7 +119,7 @@ class PersonaliseTab
         $f->columnWidth(50);
         $f->useLanguages = true;
         $value = $data['thinking_text'] ?? $m->_("Thinking...");
-        $f->attr('value', $value);
+        $f->val( $value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -130,7 +130,7 @@ class PersonaliseTab
         $f->columnWidth(50);
         $f->useLanguages = true;
         $value = $data['submit_text'] ?? $m->_("Send");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -141,7 +141,7 @@ class PersonaliseTab
         $f->columnWidth(50);
         $f->useLanguages = true;
         $value = $data['reset_text'] ?? $m->_("Reset this chat");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -152,7 +152,7 @@ class PersonaliseTab
         $f->label($m->_('Disclaimer text'));
         $f->useLanguages = true;
         $value = $data['disclaimer_text'] ?? $m->_("This assistant uses AI and can make mistakes. Please check important information.");
-        $f->attr('value', $value);
+        $f->val($value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -165,7 +165,7 @@ class PersonaliseTab
         $f->label($m->_('Additional information'));
         $f->notes($m->_("Give your Add content and links in the widget footer."));
         $value = !empty($data['footer_text']) ?? '';
-        $f->attr('value', $value);
+        $f->val($value);
         $fieldset->add($f);
 
         $inputfields->add($fieldset);
