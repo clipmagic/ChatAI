@@ -33,6 +33,8 @@
         <div id="chatbot-messages" class="chatbot-messages"></div>
     </div>
 
+    <div id="chatbot-cta" data-pid="<?=$page->id?>"></div>
+
     <div class="chatbot-input-wrapper">
         <form id="chatbot-form" class="chatbot-form">
             <input type="text" id="chatbot-input" data-ln="<?=$user->language->id?>" class="chatbot-input" placeholder="<?=$placeholder?>" required aria-label="Chatbox input field">
@@ -59,6 +61,8 @@
                 </button>
             </div>
         </div>
+
+
     <footer class="chatbot-footer">
         <p class="chatbot-disclaimer"><?=$disclaimer_text?></p>
 

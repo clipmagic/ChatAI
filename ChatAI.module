@@ -393,7 +393,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
             // tokens/temperature/reasoning mapping stays the same
             if (isset($payload['max_completion_tokens'])) $body['max_output_tokens'] = (int)$payload['max_completion_tokens'];
-            if (isset($payload['temperature'])) $body['temperature'] = (float)$payload['temperature'];
+            //if (isset($payload['temperature'])) $body['temperature'] = (float)$payload['temperature'];
             if (!empty($payload['reasoning_effort'])) $body['reasoning'] = ['effort' => (string)$payload['reasoning_effort']];
             // drop verbosity (not public)
 
@@ -541,7 +541,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function sendMessage(string $userMessage, $langId = null, $meta = []): \stdClass
+    public function sendMessage(string $userMessage, $langId = null, int $pid, string $url): \stdClass
     {
         $san = $this->wire('sanitizer');
         $chatProcess = $this->wire('modules')->get('ProcessChatAI');
@@ -572,8 +572,26 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Validate
         $msg = $san->text($userMessage);
 
+        // Context for CTA hook
+        $ctaCtx = [
+            'status'    => 'ok',
+            'userText'  => $msg,
+            'replyText' => '',
+            'error'     => null,
+            'pageId'    => $pid,
+            'url'       => $url,
+        ];
+
+
         $result = $this->isMessageAllowed($msg);
         if($result && $result->error) {
+            // Optional CTA
+            $ctaCtx['status'] = 'not_allowed';
+            $ctaCtx['error'] = $result->error;
+            $ctaHtml = $this->composeCTA($ctaCtx);
+            if ($ctaHtml) {
+                $result->cta = $ctaHtml;
+            }
             return $result;
         }
 
@@ -603,6 +621,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Quick out if small talk
         if($label === 'small_talk') {
             $result->reply = $cfgLang('smalltalk_reply') ?: 'Hello. How can I help you today?';
+            // Optional CTA
+            $ctaCtx['status'] = 'smalltalk';
+            $ctaCtx['replyText'] = $result->reply;
+            $ctaHtml = $this->composeCTA($ctaCtx);
+            if ($ctaHtml) {
+                $result->cta = $ctaHtml;
+            }
             return $result;
         }
 
@@ -631,6 +656,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     }
                     break;
             }
+            // Optional CTA
+            $ctaCtx['status'] = $label;
+            $ctaCtx['replyText'] = $result->reply;
+            $ctaHtml = $this->composeCTA($ctaCtx);
+            if ($ctaHtml) {
+                $result->cta = $ctaHtml;
+            }
             return $result;
         }
 
@@ -651,6 +683,14 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         if (!empty($credit['blocked'])) {
             $result->error = $this->getErrorMessage(4); // reached limit
             $result->stop  = true;
+            // Optional CTA
+            $ctaCtx['status'] = 'blocked';
+            $ctaCtx['error'] = $result->error;
+            $ctaCtx['replyText'] = $result->reply;
+            $ctaHtml = $this->composeCTA($ctaCtx);
+            if ($ctaHtml) {
+                $result->cta = $ctaHtml;
+            }
             return $result;
         }
 
@@ -686,8 +726,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'event'            => $event,
                 'chat_id'          => $this->getCurrentChatId(),
                 'latency_ms'       => (int) round((microtime(true) - $started) * 1000),
-                'count'            => $credit['count'],
-                'remaining'        => $credit['remaining'],
+                'count'            => (int) ($credit['count'] ?? 0),
+                'remaining'        => (int) ($credit['remaining'] ?? 0),
+                'max_messages'     => (int) ($credit['max'] ?? 0),
                 'stop'             => false,
                 'lang_id'          => (int) ($userLangId ?? 0),
                 'model'            => (string) $this->model,
@@ -697,13 +738,16 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'user_msg_hash'    => $ph['hash'],
 
             ];
-            $meta['max_messages'] = (int) ($credit['max'] ?? 0);
-            $meta['count']        = (int) ($credit['count'] ?? 0);
-            $meta['remaining']    = (int) ($credit['remaining'] ?? 0);
 
             if (!$m->ok) {
                 $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
                 $this->obsLog($m, $meta);
+
+                // Optional CTA (no return yet)
+                $ctaCtx['status'] = 'failed';
+                $ctaCtx['error'] = $meta['err_code'];
+                $ctaCtx['replyText'] = $result->reply;
+
             } else {
                 // Limit check
                 $meta['stop']       = (bool)$result->stop;
@@ -720,7 +764,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             }
         }
 
-
         // Interpret
         if (!$m->ok) {
             $code = !empty($m->error) ? (string)$m->error : 'unknown';
@@ -728,13 +771,31 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // Normalize provider “too busy / quota / throttled” signals to case 15
             if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
                 $result->error = $this->getErrorMessage(15); // object with msg + warning
-                $result->stop  = false;                      // allow retry (your call)
+                $result->stop  = false;
+
+                // Optional CTA
+                $ctaCtx['status'] = $code;
+                $ctaCtx['replyText'] = $result->reply;
+                $ctaCtx['error'] = $result->error;
+                $ctaHtml = $this->composeCTA($ctaCtx);
+                if ($ctaHtml) {
+                    $result->cta = $ctaHtml;
+                }
                 return $result;
             }
 
             // Everything else → generic failure (case 6)
             $result->error = $this->getErrorMessage(6);     // object with msg + warning
             $result->stop  = true;                          // or false, if you want retries
+
+            // Optional CTA
+            $ctaCtx['status'] = 'failed';
+            $ctaCtx['replyText'] = $result->reply;
+            $ctaCtx['error'] = $result->error;
+            $ctaHtml = $this->composeCTA($ctaCtx);
+            if ($ctaHtml) {
+                $result->cta = $ctaHtml;
+            }
             return $result;
         }
 
@@ -783,10 +844,17 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             } elseif ($remaining === 0) {
                 $result->error = $this->getErrorMessage(4); // or 11
                 $result->stop  = true;
+                $ctaCtx['status'] = 'cutoff';
+                $ctaCtx['error'] = $result->error;
             }
         }
 
-
+        // Optional CTA
+        $ctaCtx['replyText'] = $result->reply;
+        $ctaHtml = $this->composeCTA($ctaCtx);
+        if ($ctaHtml) {
+            $result->cta = $ctaHtml;
+        }
         return $result;
     }
 
@@ -847,52 +915,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
         return null; // under limit
     }*/
-
- /*   protected function enforceMessageLimit(\stdClass $result): ?\stdClass
-    {
-        $session = $this->wire('session');
-        $max = (int) $this->max_messages; // 0 or less = unlimited
-        if ($max <= 0) return null;
-
-        $count = (int) ($session->getFor('chatai', 'count') ?? 0);
-
-        // If already exhausted, block immediately (do NOT increment)
-        if ($count >= $max) {
-            $err = $this->getErrorMessage(4); // "This chat has reached its limit..."
-            $result->error = $err;
-            $result->stop  = true;
-            return $result;
-        }
-
-        // Count this accepted user message
-        $count++;
-        $session->setFor('chatai', 'count', $count);
-
-        $remaining = max(0, $max - $count);
-        $result->remaining = $remaining; // optional; useful for debugging/UI
-
-        // One left (after this one, there will be 1 remaining)
-        if ($remaining === 1) {
-            $warn = $this->getErrorMessage(10); // "You have one question left..."
-            $result->error = $warn;
-            $result->stop  = false;
-            return $result;
-        }
-
-        // Just used the last allowed message
-        if ($remaining === 0) {
-            // Add a dedicated message for this case (recommended)
-            // Should be warning-style (not replacing the answer), but should lock input.
-            $warn = $this->getErrorMessage(11); // "This was your last question. Please start a new chat to continue."
-            $result->error = $warn;
-            $result->stop  = true;
-            return $result;
-        }
-
-        return null;
-    }*/
-
-
 
     public function getObsLog(): \ProcessWire\ChatAIObsLog
     {
@@ -1297,66 +1319,6 @@ SQL;
     /** @param array $payload */
     public function ___afterResponse(array $payload): array { return $payload; }
 
-    /** Helper: sites can override booking page detection via hook. */
-    protected function ___isBookingPage(string $url): bool {
-        return false;
-    }
-
-    /** Hook helper for chatai-api.php */
-
-    /**
-     * Decorate an API result once: optional CTA, sanitize, and run afterResponse.
-     * Keeps your sendMessage() contract intact.
-     *
-     * @param object|array $result  The object/array returned by sendMessage()
-     * @param array        $params  ['ln'=>int|null,'page_url'=>string,'intent'=>string]
-     * @return object|array
-     */
-    public function finalizeApiResult(object|array $result, array $params = []): object|array {
-        $wasArray = is_array($result);
-        if ($wasArray) $result = (object)$result;
-
-        $pageUrl = (string)($params['page_url'] ?? '');
-        $langId  = (int)($params['ln'] ?? $params['lang_id'] ?? 0);
-        $intent  = (string)($params['intent'] ?? 'general');
-        $turn    = (int)($this->wire('session')->getFor('chatai', 'turn') ?? 1);
-        $hasError = !empty($result->error);
-
-        // Add CTA only for non-error and outside booking pages
-        if (!$hasError && !$this->isBookingPage($pageUrl)) {
-            $ctx = [
-                'intent'        => $intent,
-                'pageUrl'       => $pageUrl,
-                'lang_id'       => $langId,
-                'turn'          => $turn,
-                'isBookingPage' => $this->isBookingPage($pageUrl),
-            ];
-            if ($cta = $this->composeCTA($ctx)) {
-                if (!isset($result->extras) || !is_object($result->extras)) {
-                    $result->extras = new \stdClass();
-                }
-                $result->extras->cta_html = $this->purify($cta);
-            }
-        }
-
-        // Sanitize main reply if present
-        if (isset($result->reply) && is_string($result->reply)) {
-            $result->reply = $this->purify($result->reply);
-        }
-
-        // Last-mile hook: stay compatible if afterResponse expects array
-        $hookIn  = (array)$result;
-        $hookOut = $this->afterResponse($hookIn); // site can be a no-op
-        $result  = is_array($hookOut) ? (object)$hookOut : $hookOut;
-
-        return $wasArray ? (array)$result : $result;
-    }
-
-    /** Keep markup to your allowed tags; route through your site purifier/sanitizer if available. */
-    protected function purify(string $html): string {
-        $san = $this->wire('sanitizer');
-        return method_exists($san, 'purify') ? $san->purify($html) : $html;
-    }
 
 
     /* Determine if page eligible for indexing and rag */

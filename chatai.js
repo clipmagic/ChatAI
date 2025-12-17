@@ -200,6 +200,7 @@ let chatai = {
 
 
         chataiStore.push({role, type: 'html', name: name || null, content: html});
+
     },
 
     go: () => {
@@ -311,12 +312,23 @@ let chatai = {
 
             try {
                 const url = '/chatai-api/';
-                const data = {msg: message, ln: input.dataset.ln};
+                const data = {
+                    msg: message,
+                    ln: input.dataset.ln,
+                    pid: document.getElementById('chatbot-cta').dataset.pid,
+                    url: window.location.href
+                };
 
                 const res = await chatai.connectPost(data, url);
                 console.log(res);
 
                 if (res) {
+
+                    // Populate CTA div if the html exists from the hook
+                    if(res.cta && typeof res.cta === 'string' && res.cta.trim()) {
+                        document.getElementById('chatbot-cta').innerHTML = res.cta.trim()
+                    }
+
 
                     // 0) Cutoff: partial answer + soft notice, then disable form
                     if (res.cutoff === true) {
