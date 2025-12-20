@@ -1,18 +1,20 @@
 <?php namespace ProcessWire;
 use stdClass;
 
-$respond = function($data) {
-    header('Content-Type: application/json; charset=utf-8');
-    echo json_encode($data, JSON_UNESCAPED_UNICODE);
-    exit; // stop any further output
-};
+/*
+This endpoint intentionally returns raw JSON; ProcessWire bootstrapping and
+headers are handled by index.php.
+*/
+
+
+
 
 $chatai = $modules->get('ChatAI');
 $res = new stdClass();
 
 if(!$modules->isInstalled('ChatAI')) {
     $res->error = (object)['msg' => 'ChatAI is not installed.'];
-    return $respond($res);   // your habitual "return", helper does the echo+exit
+    return json_encode($res);
 }
 
 // Reset request: clears PHP session namespace used by ChatAI
@@ -39,20 +41,20 @@ if (($input->get->text('action') === 'reset') || ($input->post->text('action') =
             }
         }
     }
-    return $respond(['ok' => true]);
+    return json_encode(['ok' => true]);
 }
 
 $session->setFor('chatai', 'ip', $session->getIP());
 
 $post = trim(file_get_contents('php://input'));
-if(!$post) return $respond($res);
+if(!$post) return json_encode($res);;
 
 $data = json_decode($post);
 $userMessage = $sanitizer->text($data->msg ?? '');
 if($userMessage === '') {
     $res->error = $chatai->getErrorMessage(2);
-    return $respond($res);
+    return json_encode($res);
 }
 
 $res = $chatai->sendMessage($userMessage, $data->ln ?? null, $sanitizer->int($data->pid) ?? null, $data->url ?? '');
-return $respond($res);
+return json_encode($res);

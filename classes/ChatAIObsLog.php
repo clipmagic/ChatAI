@@ -130,10 +130,12 @@ class ChatAIObsLog extends Wire
     public function fetchDailyVolume(int $days = 7): array
     {
         $db   = $this->wire('database');
-        $days = max(1, min($days, 60)); // hard cap
+        $days = max(1, min($days, 60));
 
-        $from = new \DateTime("-{$days} days");
+        $today = new \DateTime('today');
+        $from  = (clone $today)->modify('-' . ($days - 1) . ' days');
         $fromStr = $from->format('Y-m-d 00:00:00');
+
 
         $sql = "
         SELECT DATE(created) AS d, event_type, COUNT(*) AS cnt
@@ -168,6 +170,7 @@ class ChatAIObsLog extends Wire
                 'cutoff' => 0,
             ];
         }
+
 
         foreach ($rows as $row) {
             $d     = (string) $row['d'];
@@ -374,7 +377,8 @@ class ChatAIObsLog extends Wire
         $db   = $this->wire('database');
         $days = max(1, min($days, 60));
 
-        $from = new \DateTime("-{$days} days");
+        $today = new \DateTime('today');
+        $from  = (clone $today)->modify('-' . ($days - 1) . ' days');
         $fromStr = $from->format('Y-m-d 00:00:00');
 
         $sql = "

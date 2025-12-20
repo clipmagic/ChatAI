@@ -128,7 +128,7 @@ class DashboardTab
 
         // --- Backfill & Reconcile ---
         $bf = $m->get('InputfieldFieldset');
-        $bf->label = $m->_('Backfill & Reconcile');
+        $bf->label = $m->_('Update Vector DB');
         $bf->notes = $m->_('Scan all site pages. Index eligible pages missing from the vector DB; delete vectors for ineligible pages that still have entries.');
 
         $dry = $m->get('InputfieldCheckbox');
@@ -149,7 +149,7 @@ class DashboardTab
 
         $btn = $m->get('InputfieldSubmit');
         $btn->name = 'chatai_run_backfill';
-        $btn->value = $m->_('Run Backfill & Reconcile');
+        $btn->value = $m->_('Run Re-index & Reconcile');
         $btn->attr('class', 'ui-button ui-priority-primary');
         $bf->add($btn);
 

@@ -541,7 +541,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function sendMessage(string $userMessage, $langId = null, int $pid, string $url): \stdClass
+    public function sendMessage(string $userMessage, $langId = null, int $pid = null, string $url = null, $meta = []): \stdClass
     {
         $san = $this->wire('sanitizer');
         $chatProcess = $this->wire('modules')->get('ProcessChatAI');
@@ -573,10 +573,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $msg = $san->text($userMessage);
 
         // Context for CTA hook
-        $ctaCtx = [
+        $payload = [
             'status'    => 'ok',
-            'userText'  => $msg,
-            'replyText' => '',
+            'openai_error'  => null,
+            'msg'  => $msg,
+            'reply' => '',
             'error'     => null,
             'pageId'    => $pid,
             'url'       => $url,
@@ -586,9 +587,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $result = $this->isMessageAllowed($msg);
         if($result && $result->error) {
             // Optional CTA
-            $ctaCtx['status'] = 'not_allowed';
-            $ctaCtx['error'] = $result->error;
-            $ctaHtml = $this->composeCTA($ctaCtx);
+            $payload['status'] = 'not_allowed';
+            $payload['error'] = $result->error;
+            $ctaHtml = $this->afterResponse($payload);
             if ($ctaHtml) {
                 $result->cta = $ctaHtml;
             }
@@ -622,9 +623,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         if($label === 'small_talk') {
             $result->reply = $cfgLang('smalltalk_reply') ?: 'Hello. How can I help you today?';
             // Optional CTA
-            $ctaCtx['status'] = 'smalltalk';
-            $ctaCtx['replyText'] = $result->reply;
-            $ctaHtml = $this->composeCTA($ctaCtx);
+            $payload['status'] = $label;
+            $payload['replyText'] = $result->reply;
+            $ctaHtml = $this->afterResponse($payload);
             if ($ctaHtml) {
                 $result->cta = $ctaHtml;
             }
@@ -657,9 +658,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     break;
             }
             // Optional CTA
-            $ctaCtx['status'] = $label;
-            $ctaCtx['replyText'] = $result->reply;
-            $ctaHtml = $this->composeCTA($ctaCtx);
+            $payload['status'] = $label;
+            $payload['replyText'] = $result->reply;
+            $ctaHtml = $this->afterResponse($payload);
             if ($ctaHtml) {
                 $result->cta = $ctaHtml;
             }
@@ -684,10 +685,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $result->error = $this->getErrorMessage(4); // reached limit
             $result->stop  = true;
             // Optional CTA
-            $ctaCtx['status'] = 'blocked';
-            $ctaCtx['error'] = $result->error;
-            $ctaCtx['replyText'] = $result->reply;
-            $ctaHtml = $this->composeCTA($ctaCtx);
+            $payload['status'] = 'blocked';
+            $payload['error'] = $result->error;
+            $payload['replyText'] = $result->reply;
+            $ctaHtml = $this->afterResponse($payload);
             if ($ctaHtml) {
                 $result->cta = $ctaHtml;
             }
@@ -744,9 +745,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $this->obsLog($m, $meta);
 
                 // Optional CTA (no return yet)
-                $ctaCtx['status'] = 'failed';
-                $ctaCtx['error'] = $meta['err_code'];
-                $ctaCtx['replyText'] = $result->reply;
+                $payload['status'] = 'failed';
+                $payload['error'] = $meta['err_code'];
+                $payload['replyText'] = $result->reply;
 
             } else {
                 // Limit check
@@ -774,10 +775,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $result->stop  = false;
 
                 // Optional CTA
-                $ctaCtx['status'] = $code;
-                $ctaCtx['replyText'] = $result->reply;
-                $ctaCtx['error'] = $result->error;
-                $ctaHtml = $this->composeCTA($ctaCtx);
+                $payload['status'] = $code;
+                $payload['replyText'] = $result->reply;
+                $payload['error'] = $result->error;
+                $ctaHtml = $this->afterResponse($payload);
                 if ($ctaHtml) {
                     $result->cta = $ctaHtml;
                 }
@@ -789,10 +790,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $result->stop  = true;                          // or false, if you want retries
 
             // Optional CTA
-            $ctaCtx['status'] = 'failed';
-            $ctaCtx['replyText'] = $result->reply;
-            $ctaCtx['error'] = $result->error;
-            $ctaHtml = $this->composeCTA($ctaCtx);
+            $payload['status'] = 'failed';
+            $payload['replyText'] = $result->reply;
+            $payload['error'] = $result->error;
+            $ctaHtml = $this->afterResponse($payload);
             if ($ctaHtml) {
                 $result->cta = $ctaHtml;
             }
@@ -844,14 +845,14 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             } elseif ($remaining === 0) {
                 $result->error = $this->getErrorMessage(4); // or 11
                 $result->stop  = true;
-                $ctaCtx['status'] = 'cutoff';
-                $ctaCtx['error'] = $result->error;
+                $payload['status'] = 'cutoff';
+                $payload['error'] = $result->error;
             }
         }
 
         // Optional CTA
-        $ctaCtx['replyText'] = $result->reply;
-        $ctaHtml = $this->composeCTA($ctaCtx);
+        $payload['replyText'] = $result->reply;
+        $ctaHtml = $this->afterResponse($payload);
         if ($ctaHtml) {
             $result->cta = $ctaHtml;
         }
@@ -885,36 +886,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'remaining' => max(0, $max - $count),
         ];
     }
-
-
-
-/*    protected function enforceMessageLimit(stdClass $result) : ?stdClass {
-        $session = $this->wire('session');
-        $max = (int) $this->max_messages;               // 0 or less = unlimited
-        if ($max <= 0) return null;
-
-        $count = (int) ($session->getFor('chatai', 'count') ?? 0);
-        $count++;
-        $session->setFor('chatai', 'count', $count);
-        $remaining = max(0, $max - $count);
-
-        // One left
-        if ($remaining === 1) {
-            $warn = $this->getErrorMessage(10);  // "You have one question left..."
-            $result->error  = $warn;                    // keeps warning:true for CSS
-            $result->stop   = false;                    // still can continue
-            return $result;                             // return early, no block yet
-        }
-
-        // Limit exceeded
-        if ($remaining === 0) {
-            $err = $this->getErrorMessage(4);    // "Too many questions. Goodbye."
-            $result->error  = $err;
-            $result->stop   = true;                     // lock input
-            return $result;
-        }
-        return null; // under limit
-    }*/
 
     public function getObsLog(): \ProcessWire\ChatAIObsLog
     {
@@ -1310,10 +1281,6 @@ SQL;
     public function ___afterSend(array|object $rawResponse): array|object {
         return $rawResponse; // no-op by default
     }
-
-    /** Hook: optional contextual CTA HTML fragment (or null). */
-    /** @param array $ctx */
-    public function ___composeCTA(array $ctaCtx): ?string { return null; }
 
     /** Hook: last-mile payload tweak before returning JSON to the widget. */
     /** @param array $payload */
