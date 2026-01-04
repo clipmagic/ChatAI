@@ -44,11 +44,11 @@ class RAG extends Wire {
     /** Page must use a configured template to be indexed. */
     public function shouldIndexPage(Page $page, array $cfg): bool {
 
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+      //  $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $chatai = $this->wire('modules')->get('ChatAI');
         $config = $this->wire('config');
 
-        $cfg = $chatProcess->loadPromptSettings();
+        $cfg = $chatai->promptService()->loadPromptSettings();
 
         if(!$chatai->validTemplate($page, $cfg)) return false;
         if ($page->id === $config->http404PageID) return false;                         // your 404 page (or use config)
@@ -67,7 +67,6 @@ class RAG extends Wire {
     public function shouldReindex(Page $page): bool
     {
         $db    = $this->wire('database');
-        $pages = $this->wire('pages');
         $tbl   = $db->escapeTable(self::CHATAI_VEC_TABLE);
 
         // Ensure we’re not reusing a stale Page instance
@@ -240,7 +239,6 @@ class RAG extends Wire {
         $title = (string)$page->title;
         $headings = \json_encode($content['heads']);
 
-
         $slug = $page->name;
         $idx = 0;
 
@@ -294,48 +292,6 @@ class RAG extends Wire {
     /****************
      * 4) RETRIEVAL *
      ****************/
-
-    /**
-     * FULLTEXT prefilter (per lang), cosine rerank.
-     * $prefilter bounds the initial candidate count – tune for your content size.
-     */
-//    public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
-//        $db = $this->wire('database');
-//        $qVec = $this->embedText($query);
-//
-//        try {
-//            $stmt = $db->prepare(
-//                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-//                   FROM `" . self::CHATAI_VEC_TABLE . "`
-//                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
-//                  LIMIT ?"
-//            );
-//            $stmt->execute([$userLangId, $query, $prefilter]);
-//            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-//        } catch (\Throwable $e) {
-//            $rows = [];
-//        }
-//
-//        if (!$rows) {
-//            $stmt2 = $db->prepare(
-//                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-//                   FROM `" . self::CHATAI_VEC_TABLE . "`
-//                  WHERE lang_id=?
-//                  LIMIT 200"
-//            );
-//            $stmt2->execute([$userLangId]);
-//            $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-//        }
-//
-//        $scored = [];
-//        foreach ($rows as $r) {
-//            $vec = $this->unpackCsv($r['embedding_csv']);
-//            $r['score'] = $this->cosine($qVec, $vec);
-//            $scored[] = $r;
-//        }
-//        usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
-//        return array_slice($scored, 0, $k);
-//    }
 
     public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
         $db = $this->wire('database');
@@ -409,66 +365,6 @@ class RAG extends Wire {
         }
         return ltrim($buf);
     }
-
-    /**
-     * Construct messages with the built context and call your existing ChatAI chat method.
-     */
-
-/*    public function answerWithRAG(string $userText, ?int $userLangId = null): string {
-        // resolve current language id
-        if ($userLangId === null) {
-            $languages = $this->wire('languages');
-            $lang = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
-            $userLangId = $lang ? (int) $lang->id : 0;
-        }
-
-        // load prompt settings once
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $cfg = $chatProcess ? (array) $chatProcess->loadPromptSettings() : [];
-
-        // classify the message
-        $classifier = new \ProcessWire\Classifier();
-        $classifier->setWire($this->wire());
-        $decision = $classifier->classify($userText); // ['label' => ..., 'use_rag' => bool]
-
-        // handle non-RAG routes first
-        switch ($decision['label']) {
-            case 'small_talk':
-                $reply = $this->cfgLang('smalltalk_reply', $cfg, $userLangId);
-                return $reply !== '' ? $reply : 'Hello. How can I help?';
-
-            case 'ambiguous':
-                $reply = $this->cfgLang('no_context_reply', $cfg, $userLangId);
-                return $reply !== '' ? $reply : 'Tell me what you’re looking for and I’ll point you to the right page.';
-
-            case 'meta':
-                $reply = $this->cfgLang('meta_reply', $cfg, $userLangId);
-                if ($reply === '') $reply = $this->cfgLang('no_context_reply', $cfg, $userLangId);
-                return $reply !== '' ? $reply : 'I can help with pages and information on this site. Ask me what you’re looking for.';
-
-            case 'action':
-                $reply = $this->cfgLang('action_reply', $cfg, $userLangId);
-                return $reply !== '' ? $reply : "Sure. Tell me what you'd like me to do with the site content.";
-        }
-
-        // RAG path (info_query or anything that set use_rag=true)
-        if (!empty($decision['use_rag'])) {
-            // retrieve & build context
-            $top = $this->retrieveTopK($userText, $userLangId, 6); // keep K=6 as before
-            $context = $this->buildContextFromChunks($top);
-
-            // if context exists, return it (your real chat call would consume this)
-            if ($context !== '') {
-                return $context; // in production, pass context + userText to your LLM call
-            }
-
-            // fallback if retrieval missed
-            return (string) ($cfg['no_context_reply'] ?? '[no site context matched – try another query]');
-        }
-
-        // ultimate fallback
-        return (string) ($cfg['no_context_reply'] ?? 'How can I help with the site content?');
-    }*/
 
     // fetch cfg value by language: key__{langId} → key → ''
     protected function cfgLang(string $key, array $cfg, int $langId): string {

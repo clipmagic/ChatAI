@@ -9,15 +9,12 @@ class DashboardTab
     public function build($form, $data): array {
 
         $m         = \ProcessWire\wire('modules');
-        $config    = \ProcessWire\wire('config');
         $languages = \ProcessWire\wire('languages');
-        $sanitizer = \ProcessWire\wire('sanitizer');
-
-        $tabName = $languages->_('Dashboard');
 
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
-        $inputfields->attr('id', $sanitizer->fieldName($tabName) );
+        $inputfields->attr('name', 'dashboard');
+        $inputfields->attr('id', $m->_('Dashboard'));
 
         // --- General: chunk on save ---
         $f = $m->get('InputfieldCheckbox');
@@ -126,34 +123,66 @@ class DashboardTab
         $insights->value = $json->html ?? '';
         $inputfields->add($insights);
 
-        // --- Backfill & Reconcile ---
+        // --- RAG: Reindex & Reconcile ---
         $bf = $m->get('InputfieldFieldset');
-        $bf->label = $m->_('Update Vector DB');
-        $bf->notes = $m->_('Scan all site pages. Index eligible pages missing from the vector DB; delete vectors for ineligible pages that still have entries.');
+        $bf->label = $m->_('Update Vector DB (RAG)');
+        $bf->description = $m->_(
+            'Scan site pages using the selector below. ' .
+            'Eligible pages missing from the vector database will be indexed; ' .
+            'vectors for pages that no longer match the selector will be removed.'
+        );
 
+        // Selector
+        $selector = $m->get('InputfieldText');
+        $selector->name = 'rag_selector';
+        $selector->label = $m->_('Page selector');
+        $selector->value = 'has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404';
+        $selector->notes = $m->_(
+            'ProcessWire selector used to find pages for indexing. ' .
+            'Default: has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404 ' .
+            'Do not include id>, sort, or limit; these are applied automatically.'
+        );
+        $bf->add($selector);
+
+        // Start ID
+        $startId = $m->get('InputfieldInteger');
+        $startId->name = 'rag_start_id';
+        $startId->label = $m->_('Start from page ID');
+        $startId->value = 0;
+        $startId->min = 0;
+        $startId->notes = $m->_(
+            'Only process pages with an ID greater than this value. ' .
+            'Use to resume a previous run.'
+        );
+        $startId->columnWidth(50);
+        $bf->add($startId);
+
+        // Batch size
+        $batch = $m->get('InputfieldInteger');
+        $batch->name = 'rag_batch_size';
+        $batch->label = $m->_('Batch size (50–1000)');
+        $batch->value = 200;
+        $batch->min = 50;
+        $batch->max = 1000;
+        $batch->columnWidth(50);
+        $bf->add($batch);
+
+        // Dry run
         $dry = $m->get('InputfieldCheckbox');
-        $dry->name = 'chatai_backfill_dry_run';
+        $dry->name = 'rag_dry_run';
         $dry->label = $m->_('Dry run (report only, no changes)');
         $dry->checked = true;
-        $dry->columnWidth(50);
         $bf->add($dry);
 
-        $chunk = $m->get('InputfieldInteger');
-        $chunk->name = 'chatai_backfill_chunk';
-        $chunk->label = $m->_('Batch size (50–1000)');
-        $chunk->value = 200;
-        $chunk->min = 50;
-        $chunk->max = 1000;
-        $chunk->columnWidth(50);
-        $bf->add($chunk);
-
+        // Submit
         $btn = $m->get('InputfieldSubmit');
-        $btn->name = 'chatai_run_backfill';
+        $btn->name = 'rag_run_reindex';
         $btn->value = $m->_('Run Re-index & Reconcile');
         $btn->attr('class', 'ui-button ui-priority-primary');
         $bf->add($btn);
 
         $inputfields->add($bf);
+
 
         $form->add($inputfields);
 

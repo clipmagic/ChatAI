@@ -108,8 +108,9 @@ class IndexContentExtractor extends Wire
     {
         $cfg = $this->wire('cache')->getFor('chatai', 'promptSettings');
         if(!$cfg) {
-            $m = $this->wire('modules')->get('ProcessChatAI');
-            $cfg = $m->loadPromptSettings();
+            $m = $this->wire('modules')->get('ChatAI');
+            $svc = $m->promptService();
+            $cfg = $svc->loadPromptSettings();
         }
 
         $raw = (string)($cfg['rag_candidate_selectors'] ?? "article, [role='main'], .content, .page-content, .entry-content, .post-content, #content");
@@ -120,13 +121,12 @@ class IndexContentExtractor extends Wire
     {
         $cfg = $this->wire('cache')->getFor('chatai', 'promptSettings');
         if(!$cfg) {
-            $m = $this->wire('modules')->get('ProcessChatAI');
-            $cfg = $m->loadPromptSettings();
+            $m = $this->wire('modules')->get('ChatAI');
+            $svc = $m->promptService();
+            $cfg = $svc->loadPromptSettings();
         }
 
         $raw = (string)($cfg['rag_exclude_selectors'] ?? "header, footer, nav, aside, form[role='search'], [role='banner'], [role='navigation'], [role='contentinfo'], .sidebar, .breadcrumbs, .menu, .mega-menu, .toolbar, .cookie, .consent, .newsletter, .promo, .ad, .related, .share, .social, #header, #footer");
-
-        bd($raw, 'exclude');
         return $this->splitCsv($raw);
     }
 

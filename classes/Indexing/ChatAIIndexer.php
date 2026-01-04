@@ -43,33 +43,31 @@ class ChatAIIndexer extends Wire
     public function getIndexVersion(): int
     {
         // @var \ProcessWire\ProcessChatAI $proc
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        if (!$chatProcess || !method_exists($chatProcess, 'loadPromptSettings')) return 1;
+        $chatai = $this->wire('modules')->get('ChatAI');
+        if (!$chatai || !method_exists($chatai, 'promptService')) return 1;
 
-        $cfg = (array) $chatProcess->loadPromptSettings();
+        $cfg = (array) $chatai->promptService()->loadPromptSettings();
         return (int) ($cfg['index_version'] ?? 1);
     }
 
     /** Increase index_version inside ProcessChatAI prompt settings (busts caches) */
     public function bumpIndexVersion(): int
     {
-        // @var \ProcessWire\ProcessChatAI $proc
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        if (!$chatProcess || !method_exists($chatProcess, 'loadPromptSettings') || !method_exists($chatProcess, 'savePromptSettingsJson')) {
-            $this->wire('log')->save('chatai', 'bumpIndexVersion: ProcessChatAI methods unavailable');
-            return 1;
-        }
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $svc = $chatai ? $chatai->promptService() : null;
+        if(!$svc) return 1;
 
-        $cfg  = (array) $chatProcess->loadPromptSettings();
-        $next = (int) ($cfg['index_version'] ?? 1) + 1;
+        $cfg = (array) $svc->loadPromptSettings();
+        $old = (int) ($cfg['index_version'] ?? 1);
+        $next = $old + 1;
         $cfg['index_version'] = $next;
 
-        $json = json_encode($cfg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
-            $this->wire('log')->save('chatai', 'bumpIndexVersion: json_encode failed');
-            return $next;
+        if(!$svc->savePromptSettings($cfg)) {
+            $this->wire('log')->save('chatai', 'bumpIndexVersion: savePromptSettings failed');
+            return $old;
         }
 
+        $this->wire('cache')->deleteFor('chatai', "dict:v{$old}:all");
         return $next;
     }
 }

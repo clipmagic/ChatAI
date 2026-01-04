@@ -22,5 +22,8 @@ $info = [
     'icon' => 'comment',
     'requires' => ["PHP>=8.0", "ProcessWire>=3.0.201","TextformatterEntities", "TextformatterNewlineBR"],
     'installs' => "ProcessChatAI",
+    'permissions' => [
+        'chatai'
+    ],
     'href' => 'https://processwire.com/modules/chatai/'
 ];

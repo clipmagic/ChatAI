@@ -35,10 +35,11 @@ $dashboardConfig = [
     'rateLimitedLabel'    => __('Rate limited'),
     'noDataLabel'    => __('No data'),
 
+    'kpiUrl'          => $page->url . '?api=kpiSnapshot',
     'volumeUrl'       => $page->url . '?api=volumeData',
     'insightsUrl'     => $page->url . '?api=insights',
     'obslogExportUrl' => $page->url . '?api=obslogExport',
-    'kpiUrl'          => $page->url . '?api=kpiSnapshot',
+    'obslogPruneUrl'  => $page->url . '?api=obslogPrune',
 ];
 
 ?>
@@ -150,11 +151,56 @@ $dashboardConfig = [
         </div>
 
     </section>
-    <button type="button"
-            class="chatai-dashboard-export-csv ui-button chatai-dashboard-secondary-button">
-        <?= __('Export CSV') ?>
-    </button>
+    <section class="chatai-actions">
+
+        <details>
+            <summary class="InputfieldHeader uk-form-label chatai-summary">
+                <span><i class="fa fa-fw fa-cog"></i> <?=_('Helpers')?></span>
+            </summary>
+
+            <div class="chatai-obslog">
+                <button type="button"
+                        class="chatai-dashboard-export-csv ui-button chatai-dashboard-secondary-button">
+                    <i class="fa fa-download"></i> <?= __('Download CSV') ?>
+                </button>
+
+                <div class="chatai-prune">
+                    <button type="button"
+                            class="chatai-prune-obslog ui-button chatai-dashboard-secondary-button"
+                            popovertarget="chatai-prune-pop"
+                            popovertargetaction="show">
+                        <i class="fa fa-cut"></i> <?= __('Prune Observation Log') ?>
+                    </button>
+
+                </div>
+            </div>
+        </details>
+        <div id="chatai-prune-pop" popover>
+            <p class="chatai-dashboard-muted chatai-dashboard-sub">
+                <?=_('Enter the number of days to retain or Esc to cancel')?>
+            </p>
+            <input
+                    type="number"
+                    name="prune_retain_days"
+                    value=""
+                    min="1"
+                    max="3650"
+                    class="uk-input"
+            >
+            <button
+                    type="submit"
+                    value="1"
+                    name="submit_prune_obslog"
+                    class="chatai-prune-obslog ui-button chatai-dashboard-secondary-button ui-state-default"
+            >
+                <i class="fa fa-cut"></i> <?= __('Chop the log') ?>
+            </button>
+        </div>
+
+    </section>
+
 </div>
+
 
 
 

@@ -16,16 +16,19 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     const modName = 'ChatAI';
 
     /** @var \ProcessWire\RAG */
-    protected $rag;
+    protected ?\ProcessWire\RAG $rag = null;
 
     /** @var \ProcessWire\ChatAIIndexer */
-    protected $indexer;
+    protected ?\ProcessWire\ChatAIIndexer $indexer = null;
 
     /** @var \ProcessWire\Classifier */
-    protected $classifier;
+    protected ?\ProcessWire\Classifier $classifier = null;
 
     /** @var \ProcessWire\ChatAIObsLog */
-    protected $logger;
+    protected ?\ProcessWire\ChatAIObsLog $logger = null;
+
+    protected ?\ProcessWire\ChatAIPromptService $promptService = null;
+
 
     public function construct()
     {
@@ -34,7 +37,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function init()
     {
-        if (empty($this->api_key)) $this->warning('OpenAI API key missing; ChatAI may not function.');
+        if($this->wire('process') && empty($this->api_key)) {
+            $this->warning('OpenAI API key missing; ChatAI may not function.');
+        }
 
         // Load helpers
         require_once __DIR__ . '/classes/Indexing/IndexContentExtractor.php';
@@ -42,19 +47,33 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         require_once __DIR__ . '/classes/RAG/RAG.php';
         require_once __DIR__ . '/classes/Classifier.php';
         require_once __DIR__ . '/classes/ChatAIObsLog.php';
+        require_once __DIR__ . '/classes/ChatAIPromptService.php';
 
         // Shared services
-        $this->rag = new \ProcessWire\RAG();
-        $this->rag->setWire($this->wire());
+        if($this->rag === null) {
+            $this->rag = new \ProcessWire\RAG();
+            $this->rag->setWire($this->wire());
+        }
 
-        $this->indexer = new \ProcessWire\ChatAIIndexer();
-        $this->indexer->setWire($this->wire());
+        if($this->indexer === null) {
+            $this->indexer = new \ProcessWire\ChatAIIndexer();
+            $this->indexer->setWire($this->wire());
+        }
 
-        $this->classifier = new \ProcessWire\Classifier();
-        $this->classifier->setWire($this->wire());
+        if($this->classifier === null) {
+            $this->classifier = new \ProcessWire\Classifier();
+            $this->classifier->setWire($this->wire());
+        }
 
-        $this->logger = new \ProcessWire\ChatAIObsLog();
-        $this->logger->setWire($this->wire());
+        if($this->logger === null) {
+            $this->logger = new \ProcessWire\ChatAIObsLog();
+            $this->logger->setWire($this->wire());
+        }
+
+        if($this->promptService === null) {
+            $this->promptService = new \ProcessWire\ChatAIPromptService();
+            $this->promptService->setWire($this->wire());
+        }
     }
 
     public function getModuleConfigInputfields(array $data) : InputfieldWrapper
@@ -215,10 +234,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function renderWidget() : string
     {
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $config = wire('config');
         $path = $config->paths->root . ltrim($this->widget, '/');
-        return $chatProcess->getWidget($path);
+        return $this->promptService()->getWidget($path);
     }
 
     public function renderStyles() : string
@@ -233,12 +251,18 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $js;
     }
 
+    public function promptService(): \ProcessWire\ChatAIPromptService
+    {
+        return $this->promptService;
+    }
+
+
     public function isMessageAllowed($message) : \stdClass {
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+       // $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $session     = $this->wire('session');
 
         $output = new \stdClass(); // optional: fully qualify
-        $output->name        = $chatProcess->getBotName();
+        $output->name        = $this->promptService()->getBotName();
         $output->blacklisted = false;
         $output->stop        = false;
         $output->error       = null;
@@ -256,7 +280,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         // blacklist check
-        $blacklistTerm = $chatProcess->isBlacklistTerm($message);
+        $blacklistTerm = $this->promptService()->isBlacklistTerm($message);
         if (!$blacklistTerm) {
             return $output;
         }
@@ -544,7 +568,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     public function sendMessage(string $userMessage, $langId = null, int $pid = null, string $url = null, $meta = []): \stdClass
     {
         $san = $this->wire('sanitizer');
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $user = $this->wire('user');
 
         $result = (object)[
@@ -567,7 +590,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 }
             } catch (\Throwable $e) { /* ignore */ }
         }
-        if ($chatProcess) $result->name = $chatProcess->getBotName();
+        $result->name = $this->promptService()->getBotName();
 
         // Validate
         $msg = $san->text($userMessage);
@@ -597,11 +620,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         $messages = [];
+        $svc = $this->promptService();
 
         $session = $this->wire('session');
         $system = $session->getFor('chatai','system_prompt');
         if (!$system) {
-            $system = ['role'=>'system','content'=>$chatProcess->getPrompt()];
+            $system = ['role'=>'system','content'=>$svc->getPrompt()];
             $session->setFor('chatai','system_prompt', $system);
         }
         $messages[] = ['role'=>'system','content'=> $system];
@@ -609,7 +633,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         // Classify message for context
         $decision = $this->classifier->classify($msg);
 
-        $cfg = $chatProcess->loadPromptSettings();
+        $cfg = $svc->loadPromptSettings();
         $userLangId = $user->language->id;
 
         $cfgLang = function(string $key) use ($cfg, $userLangId) {
@@ -699,7 +723,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         try {
            $started = microtime(true);
             // After the API call
-            $messages = $chatProcess->beforeSend($messages);
+            $messages = $this->beforeSend($messages);
             $m = $this->callModelForText($messages);
             // Normalize to object
             if (is_string($m)) {
@@ -1309,6 +1333,7 @@ SQL;
     }
 
 
+
     /* Install, Upgrade, Uninstall */
 
     private static function _createDBTables() {
@@ -1441,6 +1466,15 @@ SQL;
     {
         self::_createDBTables();
         self::_createTemplate();
+
+        $permissions = $this->wire()->permissions;
+        if (!$permissions->get('chatai')) {
+            $p = new Permission();
+            $p->name = 'chatai';
+            $p->title = 'ChatAI administration';
+            $permissions->add($p);
+        }
+
     }
 
     public function ___uninstall()

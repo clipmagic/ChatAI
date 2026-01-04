@@ -216,6 +216,51 @@
     color: #777;
 }
 
+.chatai-obslog {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    > * {
+        flex: 1;
+        min-width: fit-content;
+        max-width: 400px;
+
+    }
+}
+
+.chatai-summary {
+    padding: 20px 0;
+}
+
+.ui-button.chatai-dashboard-secondary-button {
+    display: block;
+    width: 100%;
+    margin-inline-end: 0;
+
+    &.chatai-prune-obslog {
+        margin-block-start: 1rem;
+    }
+}
+
+#chatai-prune-pop {
+    padding: 1rem;
+    color: #354b60;
+
+    border: 1px solid #dddddd;
+
+    border-radius: 1rem;
+    width: min(80%, 400px);
+}
+
+#chatai-prune-pop:popover-open::backdrop {
+    background-color: rgba(0, 0, 0, 0.15);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+
 /* Basic responsive tweaks */
 
 @media (max-width: 1024px) {

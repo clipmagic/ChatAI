@@ -21,18 +21,37 @@ class Classifier extends Wire
     protected array $cfgMemo = [];
     public function getCfg(): array {
         if (!empty($this->cfgMemo)) return $this->cfgMemo;
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $cfg = $chatProcess ? (array) $chatProcess->loadPromptSettings() : [];
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $svc = $chatai ? $chatai->promptService() : null;
+        $cfg = $svc ? (array) $svc->loadPromptSettings() : [];
         $this->cfgMemo = $cfg;
         return $this->cfgMemo;
     }
+
+
+    public static function dictionaryPrefixes(): array
+    {
+        // These are the *prefixes* used by buildDictionary() via collectLangStrings($cfg, $prefix)
+        return [
+            'smalltalk_triggers',
+            'meta_terms',
+            'stop_terms_hard',
+            'stop_terms_soft',
+            'custom_terms',
+            'question_words',
+            'action_verbs',
+            'followup_terms',
+        ];
+    }
+
+
+
     /**
      * Build or load the domain dictionary for a language.
      * Returns ['term' => weight, ...]
      */
     public function buildDictionary(): array {
         $cfg   = $this->getCfg();
-        // \ProcessWire\WireCache $cache
         $cache = $this->wire('cache');
 
         $ver = (int)($cfg['index_version'] ?? 1);
@@ -98,7 +117,6 @@ class Classifier extends Wire
         if ($this->looksLikeFollowup($t, $dict)) {
             return ['label' => 'ambiguous', 'use_rag' => false];
         }
-
         return ['label' => 'ambiguous', 'use_rag' => false];
     }
 
@@ -177,7 +195,7 @@ class Classifier extends Wire
 
 
 
-    protected function pack(string $label, bool $useRag, float $conf, array $hits): array
+ /*   protected function pack(string $label, bool $useRag, float $conf, array $hits): array
     {
         return [
             'label' => $label,
@@ -185,16 +203,16 @@ class Classifier extends Wire
             'confidence' => max(0.0, min(1.0, $conf)),
             'matched_terms' => array_values(array_unique($hits)),
         ];
-    }
+    }*/
 
-    protected function decide(float $conf, array $hits): array
+/*    protected function decide(float $conf, array $hits): array
     {
         if ($conf >= 0.50)  return $this->pack('info_query', true,  $conf, $hits);
         if ($conf >= 0.30)  return $this->pack('ambiguous',  false, $conf, $hits);
         return $this->pack('small_talk', false, $conf, $hits);
-    }
+    }*/
 
-    protected function confidence(string $t, float $score, array $hits, array $extras = []): float
+/*    protected function confidence(string $t, float $score, array $hits, array $extras = []): float
     {
         // Base: compress score ~0..3 into 0..1
         $base = max(0.0, min(1.0, $score / 3.0));
@@ -209,9 +227,9 @@ class Classifier extends Wire
 
         $conf = $base + $bump;
         return max(0.0, min(1.0, $conf));
-    }
+    }*/
 
-    protected function matchScore(string $t, array $dict): array
+/*    protected function matchScore(string $t, array $dict): array
     {
         // Match dictionary terms by n-grams up to 4 words
         $tokens = $this->tokens($t);
@@ -241,7 +259,7 @@ class Classifier extends Wire
         $hits = array_values(array_unique($hits));
 
         return [$sum, $hits];
-    }
+    }*/
 
 
     /* ----------------------- Dictionary building ------------------------ */
@@ -251,8 +269,9 @@ class Classifier extends Wire
      * Tries vector table first, then falls back to PW pages.
      * Each row: ['text' => string, 'source' => 'title'|'h1'|'h2'|'h3'|'slug'|'breadcrumb'|'faq_q'|'other']
      */
-    protected function collectSeeds(int $langId): array
+ /*   protected function collectSeeds(int $langId): array
     {
+        // TODO this function doesn't appear to be used anywhere
         $out = [];
 
         // 1) From vector metadata table if present
@@ -262,6 +281,7 @@ class Classifier extends Wire
             // Optional schema: id, lang_id, title, h1, h2, h3, slug, breadcrumb, faq_q
             $q = $database->query("SHOW TABLES LIKE '{$tbl}'");
             if ($q && $q->num_rows > 0) {
+                // TODO fix hard limit
                 $sql = "SELECT lang_id, title, headings, slug FROM {$tbl} WHERE lang_id=" . (int)$langId . " LIMIT 20000";
                 $res = $database->query($sql);
                 while ($res && ($row = $res->fetch_assoc())) {
@@ -297,6 +317,7 @@ class Classifier extends Wire
 
         // Limit scope to viewable, not hidden, not admin
         //$selector = "has_parent!=2, include=visible, template!=admin, limit=10000";
+        // TODO fix hard limit
         $selector = "has_parent!=2, template!=admin, limit=10000";
         foreach ($pages->findMany($selector) as $p) {
             $title = $p->get('title');
@@ -318,13 +339,14 @@ class Classifier extends Wire
 
             // Slug and crumbs
             $out[] = ['text' => (string)$p->name, 'source' => 'slug'];
+            // TODO determine if breadcrumbs used/needed
             $out[] = ['text' => implode(' ', array_map(function($item){ return (string)$item->title; }, $p->parents()->slice(1)->explode('title'))), 'source' => 'breadcrumb'];
         }
 
         return $out;
-    }
+    }*/
 
-    protected function extractTerms(string $text): array
+/*    protected function extractTerms(string $text): array
     {
         $t = $this->norm($text);
         // keep hyphenated terms, collapse whitespace
@@ -345,36 +367,36 @@ class Classifier extends Wire
             }
         }
         return $terms;
-    }
+    }*/
 
-    protected function tokens(string $t): array
+ /*   protected function tokens(string $t): array
     {
         $t = preg_replace('~[^\p{L}\p{N}\s\-]~u', ' ', $t);
         $t = preg_replace('~\s+~u', ' ', $t);
         $t = trim($t);
         if ($t === '') return [];
         return explode(' ', $t);
-    }
+    }*/
 
-    protected function norm(string $s): string
+/*    protected function norm(string $s): string
     {
         $s = mb_strtolower($s, 'UTF-8');
         $s = preg_replace('~\s+~u', ' ', $s);
         return trim($s);
-    }
+    }*/
 
     /* ------------------------ Config and lookups ------------------------ */
 
-    protected function getIndexVersion(): int
+ /*   protected function getIndexVersion(): int
     {
         // Prefer a module setting you bump after reindex.
         $cfg = $this->getCfg();
         if(isset($cfg['index_version'])) return (int) $cfg['index_version'];
 
         return 1;
-    }
+    }*/
 
-    protected function getCustomTerms(int $langId): array
+/*    protected function getCustomTerms(int $langId): array
     {
         // Expect textarea with one per line, optional "|weight"
         $m = $this->wire('modules')->get('ProcessChatAI');
@@ -396,9 +418,9 @@ class Classifier extends Wire
             $out[] = ['term' => $term, 'weight' => $w];
         }
         return $out;
-    }
+    }*/
 
-    protected function getStopTermsHard(int $langId): array
+/*    protected function getStopTermsHard(int $langId): array
     {
         $cfg = $this->getCfg();
         $txt = '';
@@ -416,9 +438,9 @@ class Classifier extends Wire
             $set[$def] = true;
         }
         return $set;
-    }
+    }*/
 
-    protected function getStopTermsSoft(int $langId): array
+/*    protected function getStopTermsSoft(int $langId): array
     {
         $cfg = $this->getCfg();
         $txt = '';
@@ -436,5 +458,5 @@ class Classifier extends Wire
             $set[$def] = true;
         }
         return $set;
-    }
+    }*/
 }
