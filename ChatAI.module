@@ -74,6 +74,80 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $this->promptService = new \ProcessWire\ChatAIPromptService();
             $this->promptService->setWire($this->wire());
         }
+
+        // Hooks
+        $this->addHookAfter('Pages::saved', function ($event) {
+            $page = $event->arguments(0);
+            $changes = (array)($event->arguments(1) ?? []);
+
+            $chatai = $this->wire('modules')->get('ChatAI');
+
+            $svc = $chatai->promptService();
+            $cfg = $svc->loadPromptSettings();
+
+            if(!isset($cfg['chunk_on_save'])) return;
+            $rag = $chatai->rag();
+
+            try {
+                $shouldReindex = $rag->shouldReindex($page);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai', 'shouldReindex error: ' . $e->getMessage());
+            }
+
+            $changedKeys = array_keys($changes);
+            $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
+            $contentChanged = !empty($meaningfulKeys);
+
+            if (!$shouldReindex && !$contentChanged) {
+                return;
+            }
+
+            if($page->isTrash() || !$chatai->validTemplate($page, $cfg)) {
+                try {
+                    $rag->deletePageVectors($page);
+                } catch (\Throwable $e) {
+                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id $page->id: " . $e->getMessage());
+                }
+            }
+
+            if ($contentChanged && $shouldReindex) {
+                try {
+                    $rag->deletePageVectors($page);
+                    $languages = $this->wire('languages');
+                    if($languages && $languages->count()) {
+                        foreach($languages as $lang) {
+                            $rag->collectPageText($page, $cfg);
+                        }
+                    } else {
+                        $rag->collectPageText($page, $cfg);
+                    }
+                } catch (\Throwable $e) {
+                    $this->wire('log')->save('chatai', "Index upsert error, Page id $page->id : " . $e->getMessage());
+                }
+            }
+        });
+
+        $this->addHookAfter('Pages::deleted', function($event) {
+            $page = $event->arguments(0);
+            $chatai = $this->wire('modules')->get('ChatAI');
+            $rag  = $chatai->rag();
+            try { $rag->deletePageVectors($page); }
+            catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
+        });
+
+        $this->addHookAfter('ImportPagesCSV::execute', function(HookEvent $event) {
+
+            $chatai = $this->wire('modules')->get('ChatAI');
+            $svc = $chatai->promptService();
+            $cfg = $svc->loadPromptSettings();
+            if (!empty($cfg['chunk_on_save'])) {
+                $ips = $event->object;
+                $ips->warning(
+                    $this->_('ChatAI "Update on Save" is currently enabled. For large imports, consider turning it off temporarily to avoid heavy re-indexing during import.')
+                );
+            }
+        });
+
     }
 
     public function getModuleConfigInputfields(array $data) : InputfieldWrapper
@@ -232,6 +306,37 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     /* Module functions */
 
+    /* Class getters */
+
+    public function rag(): \ProcessWire\RAG
+    {
+        return $this->rag;
+    }
+
+    public function indexer(): \ProcessWire\ChatAIIndexer
+    {
+        return $this->indexer;
+    }
+
+    public function classifer(): \ProcessWire\Classifier
+    {
+        return $this->classifier;
+    }
+
+    public function logger(): \ProcessWire\ChatAIObsLog
+    {
+        return $this->logger;
+    }
+
+    public function promptService(): \ProcessWire\ChatAIPromptService
+    {
+        return $this->promptService;
+    }
+
+
+
+
+
     public function renderWidget() : string
     {
         $config = wire('config');
@@ -249,11 +354,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     {
         $js = "<script src='$this->js' ></script>";
         return $js;
-    }
-
-    public function promptService(): \ProcessWire\ChatAIPromptService
-    {
-        return $this->promptService;
     }
 
 

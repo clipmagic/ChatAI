@@ -27,27 +27,15 @@ require_once (__DIR__ . '/classes/Classifier.php');
 
 class ProcessChatAI extends Process
 {
-
     public $tabs = [];
 
-    public $values = [];
-
     public $formName = 'chat-ai-settings';
-
-    private ?int $lastBitWarned = null;
-
-    protected $indexer;
-
-    protected $classifier;
-
 
     public function __construct()
     {
         parent::__construct();
     }
 
-
-// TEMP: classifier smoke-test
     // TEMP: classifier smoke-test; returns JSON string for easy echo in Tracy
     public function debugClassify(?string $text = null): string {
         // \ProcessWire\Input $input
@@ -57,7 +45,7 @@ class ProcessChatAI extends Process
         if ($text === null) $text = (string) ($input->get('cl_text') ?? $input->post('cl_text') ?? '');
 
         // \ProcessWire\Classifier $clf
-        $clf = new \ProcessWire\Classifier();
+        $clf = $this->chatAI()->classifier();
         $clf->setWire($this->wire());
 
         // ensure cfg loads and dict builds
@@ -76,105 +64,26 @@ class ProcessChatAI extends Process
         return json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     }
 
-
     public function init()
     {
-
-        $this->indexer = new \ProcessWire\ChatAIIndexer();
-        $this->indexer->setWire($this->wire());
-
-        $this->classifier = new \ProcessWire\Classifier();
-        $this->classifier->setWire($this->wire());
-
-        $this->chatai = $this->wire('modules')->get('ChatAI');
-
         $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
-
-        $this->addHookAfter('Pages::saved', function ($event) {
-            $page = $event->arguments(0);
-            $changes = (array)($event->arguments(1) ?? []);
-
-            $svc = $this->chatai->promptService();
-            $cfg = $svc->loadPromptSettings();
-
-            if(!isset($cfg['chunk_on_save'])) return;
-            $rag = new RAG();
-
-            try {
-                $shouldReindex = $rag->shouldReindex($page);
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', 'shouldReindex error: ' . $e->getMessage());
-            }
-
-            $changedKeys = array_keys($changes);
-            $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
-            $contentChanged = !empty($meaningfulKeys);
-
-            if (!$shouldReindex && !$contentChanged) {
-                return;
-            }
-
-            if($page->isTrash() || !$this->chatai->validTemplate($page, $cfg)) {
-                try {
-                    $rag->deletePageVectors($page);
-                } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id $page->id: " . $e->getMessage());
-                }
-            }
-
-            if ($contentChanged && $shouldReindex) {
-                try {
-                    $rag->deletePageVectors($page);
-                    $languages = $this->wire('languages');
-                    if($languages && $languages->count()) {
-                        foreach($languages as $lang) {
-                            $rag->collectPageText($page, $cfg);
-                        }
-                    } else {
-                        $rag->collectPageText($page, $cfg);
-                    }
-                } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', "Index upsert error, Page id $page->id : " . $e->getMessage());
-                }
-            }
-        });
-
-        $this->addHookAfter('Pages::deleted', function($event) {
-            $page = $event->arguments(0);
-            $rag  = new RAG();
-            try { $rag->deletePageVectors($page); }
-            catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
-        });
-
-        $this->addHookAfter('ImportPagesCSV::execute', function(HookEvent $event) {
-
-            $svc = $this->chatai->promptService();
-            $cfg = $svc->loadPromptSettings();
-            if (!empty($cfg['chunk_on_save'])) {
-                /** @var ProcessImportPagesCSV $ips */
-                $ips = $event->object;
-                $ips->warning(
-                    $this->_('ChatAI "Update on Save" is currently enabled. For large imports, consider turning it off temporarily to avoid heavy re-indexing during import.')
-                );
-            }
-        });
     }
 
     //*** Hooks ***//
 
     public function initValues(HookEvent $event)
     {
+        $svc = $this->wire('modules')->get('ChatAI')->promptService();
+
         $form = $event->object;
         if ($form->getFormName() !== $this->formName) return;
         if ($this->wire('input')->requestMethod('POST')) return;
 
-        $chatai = $this->wire('modules')->get('ChatAI');
-
-        $cfg = $chatai->promptService()->loadPromptSettings();
+        $cfg = $svc->loadPromptSettings();
 
         if(empty($cfg)) {
             $cfg = $this->getValues($form);
-            $chatai->promptService()->savePromptSettings($cfg);
+            $svc->savePromptSettings($cfg);
         }
 
         foreach($form->children() as $tab) {
@@ -196,10 +105,15 @@ class ProcessChatAI extends Process
         }
 
         // preview
-        $form->prompt->prompt_preview->attr('value', $chatai->promptService()->getPrompt());
+
+        $form->prompt->prompt_preview->attr('value', $svc->getPrompt());
 
         // one-shot
         $event->removeHook($this);
+    }
+
+    protected function chatAI(): \ProcessWire\ChatAI {
+        return $this->wire('modules')->get('ChatAI');
     }
 
 
@@ -213,8 +127,8 @@ class ProcessChatAI extends Process
 
         $craftPrompt = false;
 
-        if(!empty($this->chatai->prompt_roles)) {
-            foreach ($this->chatai->prompt_roles as $k) {
+        if(!empty($this->chatAI()->prompt_roles)) {
+            foreach ($this->chatAI()->prompt_roles as $k) {
                 if($user->hasRole($k)) {
                     $craftPrompt = true;
                     break;
@@ -242,17 +156,12 @@ class ProcessChatAI extends Process
         $days = max(1, min($days, 30)); // clamp to 1–30
 
         $kpis = '';
-
-        $chatAI = $this->chatai;
-        if ($chatAI && method_exists($chatAI, 'getObsLog')) {
-            $logger = $chatAI->getObsLog();
-            if ($logger && method_exists($logger, 'buildInsightsSnapshot')) {
-                $kpis = $logger->buildInsightsSnapshot($days);
-            }
+        $logger = $this->chatAI()->logger();
+        if ($logger && method_exists($logger, 'buildInsightsSnapshot')) {
+            $kpis = $logger->buildInsightsSnapshot($days);
         }
         return json_encode($kpis);
     }
-
 
     protected function renderVolumeDataJson(): string
     {
@@ -264,15 +173,12 @@ class ProcessChatAI extends Process
         $labels = [];
         $totals = [];
 
-        $chatAI = $this->chatai;
-        if ($chatAI && method_exists($chatAI, 'getObsLog')) {
-            $logger = $chatAI->getObsLog();
-            if ($logger && method_exists($logger, 'fetchDailyVolume')) {
-                $rows = $logger->fetchDailyVolume($days);
-                foreach ($rows as $row) {
-                    $labels[] = (string) ($row['date'] ?? '');
-                    $totals[] = (int) ($row['total'] ?? 0);
-                }
+        $logger = $this->chatAI()->logger();
+        if ($logger && method_exists($logger, 'fetchDailyVolume')) {
+            $rows = $logger->fetchDailyVolume($days);
+            foreach ($rows as $row) {
+                $labels[] = (string) ($row['date'] ?? '');
+                $totals[] = (int) ($row['total'] ?? 0);
             }
         }
 
@@ -284,9 +190,7 @@ class ProcessChatAI extends Process
 
     protected function renderInsightsJson(): string
     {
-        $chatai = $this->chatai;
-
-        if (!$chatai || !method_exists($chatai, 'getObsLog')) {
+        if (!$this->chatAI()->logger()) {
             return json_encode([
                 'html' => '<p class="chatai-dashboard-muted">' .
                     $this->_('Insights are not available.') .
@@ -294,16 +198,14 @@ class ProcessChatAI extends Process
             ]);
         }
 
-
-        $svc = $this->chatai->promptService();
+        $svc = $this->chatAI()->promptService();
         $cfg = $svc->loadPromptSettings();
 
         $input = $this->wire('input');
         $days  = (int) $input->get('days') ?: 7;
         $days  = max(1, min($days, 60));
 
-
-        $logger = $chatai->getObsLog();
+        $logger = $this->chatAI()->logger();
         if (!method_exists($logger, 'buildInsightsSnapshot')) {
             return json_encode([
                 'html' => '<p class="chatai-dashboard-muted">' .
@@ -365,20 +267,18 @@ class ProcessChatAI extends Process
 
     protected function renderObslogCsv(): void {
         $input   = $this->wire('input');
-        $modules = $this->wire('modules');
 
         $days = (int) $input->get('days') ?: 7;
         $days = max(1, min($days, 60));
 
-        $chatAI = $this->chatai;
-        if (!$chatAI || !method_exists($chatAI, 'getObsLog')) {
+        $logger = $this->chatAI()->logger();
+        if (!$logger) {
             header('Content-Type: text/plain; charset=utf-8');
             echo "Observability log is not available.";
             return;
         }
 
-        $logger = $chatAI->getObsLog();
-        if (!$logger || !method_exists($logger, 'fetchRange')) {
+        if (!method_exists($logger, 'fetchRange')) {
             header('Content-Type: text/plain; charset=utf-8');
             echo "Observability export is not available.";
             return;
@@ -387,10 +287,6 @@ class ProcessChatAI extends Process
         $today = new \DateTime('today');
         $from  = (clone $today)->modify('-' . ($days - 1) . ' days');
         $rows = $logger->fetchRange($from, $today);
-
-//       $to   = new \DateTime('today'); // now
-//        $from = (clone $to)->modify("-{$days} days");
-//        $rows = $logger->fetchRange($from, $to);
 
         $filename = sprintf(
             'chatai_obslog_last_%dd_%s.csv',
@@ -486,48 +382,39 @@ class ProcessChatAI extends Process
         return (int) $stmt->rowCount();
     }
 
-    protected function getRagReindexOptionsFromPost(): array {
+    protected function buildRagReindexSelectorFromPost(): string {
+
         $in = $this->wire('input');
-
-        $dry = (bool) $in->post('rag_dry_run');
-
-        $base = trim((string) $in->post('rag_selector'));
         $config = $this->wire('config');
+
         $adminRootPageID = (int) $config->adminRootPageID;
-        $http404ID = $config->http404PageID;
-        if($base === '') $base = "has_parent!=$adminRootPageID, include=all, template!=admin, id!=$http404ID, template!=http404";
+        $http404ID       = (int) $config->http404PageID;
 
+        // Base selector – internal, not user-editable
+        $selector = "has_parent!=$adminRootPageID, include=all, template!=admin, id!=$http404ID, template!=http404";
+
+        // Start ID (optional)
         $startId = (int) $in->post('rag_start_id');
-        if($startId < 0) $startId = 0;
+        if ($startId > 0) {
+            $selector .= ", id>$startId";
+        }
 
-        $batch = (int) $in->post('rag_batch_size');
-        if($batch < 50) $batch = 50;
-        if($batch > 1000) $batch = 1000;
+        // Batch size (bounded)
+        $batchSize = (int) $in->post('rag_batch_size');
+        if ($batchSize < 50)   $batchSize = 50;
+        if ($batchSize > 1000) $batchSize = 1000;
 
-        return [
-            'dry' => $dry,
-            'base_selector' => $base,
-            'start_id' => $startId,
-            'batch_size' => $batch,
-        ];
+        // Enforced ordering and limit
+        $selector .= ", sort=id, limit=$batchSize";
+
+        // Dev hook: last chance to refine selector string
+        $selector = $this->buildReindexSelector($selector);
+
+        return trim($selector);
     }
 
-    protected function buildRagSelector(string $baseSelector, int $startId, int $batchSize): string {
-        $s = trim($baseSelector);
-
-        // Strip a few common disallowed parts if pasted in anyway.
-        $s = preg_replace('/\b(?:sort|limit|start|id)\s*([=!<>]=?|~)\s*[^,]+/i', '', $s);
-        $s = trim(preg_replace('/\s*,\s*/', ', ', trim($s, " \t\n\r\0\x0B,")));
-
-        $config = $this->wire('config');
-        $adminRootPageID = (int) $config->adminRootPageID;
-        $http404ID = $config->http404PageID;
-        if($s === '') $s = "has_parent!=$adminRootPageID, include=all, template!=admin, id!=$http404ID, template!=http404";;
-
-        if($startId > 0) $s .= ", id>$startId";
-        $s .= ", sort=id, limit=$batchSize";
-
-        return $s;
+    public function ___buildReindexSelector(string $selector): string {
+        return $selector;
     }
 
     public function ___execute()
@@ -574,10 +461,8 @@ class ProcessChatAI extends Process
         // Chart.js from CDN (simple and proven)
         $this->config->scripts->add('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js');
 
-
-        $svc = $this->chatai->promptService();
+        $svc = $this->chatAI()->promptService();
         $cfg = $svc->loadPromptSettings();
-
 
         $form = $modules->get('InputfieldForm');
         $form->attr('name+id', $this->formName);
@@ -612,18 +497,19 @@ class ProcessChatAI extends Process
             $this->wire('session')->redirect('./');
         }
 
-
         // Handle "Run Backfill & Reconcile" for vector db
-        if($this->wire('input')->post('rag_run_reindex')) {
-            $opts = $this->getRagReindexOptionsFromPost();
-            $selector = $this->buildRagSelector($opts['base_selector'], $opts['start_id'], $opts['batch_size']);
+        if($input->post->rag_run_reindex) {
+            $selector = $this->buildRagReindexSelectorFromPost();
+            bd($selector);
+            $dryRun = $input->post->rag_dry_run ?? 0;
+            $batchSize = (int) $input->post->rag_batch_size ?? 200;
+            $startId = (int) $input->post->rag_start_id ?? 0;
             $t0 = microtime(true);
-            $summary = $this->runBackfillReconcile($opts['dry'], $selector);
+
+            $summary = $this->runBackfillReconcile($selector, $startId, $batchSize, $dryRun);
             $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
 
             $this->message($this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary));
-            $dryRun = $opts['dry'];
-
             $this->actionReindexAll($selector);
         }
 
@@ -649,16 +535,16 @@ class ProcessChatAI extends Process
                     if($key === '' || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
                     $values[$key] = $value;
                 }
-                $cfg = $this->chatai->promptService()->loadPromptSettings();
+                $cfg = $this->chatAI()->promptService()->loadPromptSettings();
 
                 $values['index_version'] = isset($cfg['index_version']) ? $cfg['index_version'] + 1 : 1;
-                $values['rag_candidate_templates'] = $this->chatai->asmToIds($values['rag_candidate_templates'] ?? []);
-                $values['rag_exclude_templates'] = $this->chatai->asmToIds($values['rag_exclude_templates'] ?? []);
+                $values['rag_candidate_templates'] = $this->chatAI()->asmToIds($values['rag_candidate_templates'] ?? []);
+                $values['rag_exclude_templates'] = $this->chatAI()->asmToIds($values['rag_exclude_templates'] ?? []);
 
                 $this->_promptMemo = $values;
-                $this->chatai->promptService()->savePromptSettings($this->_promptMemo);
+                $this->chatAI()->promptService()->savePromptSettings($this->_promptMemo);
 
-                $prefixes = $this->classifier->dictionaryPrefixes();
+                $prefixes = $this->chatAI()->classifer()->dictionaryPrefixes();
 
                 $shouldBump = false;
 
@@ -690,14 +576,14 @@ class ProcessChatAI extends Process
                 }
 
                 // Reload prompt settings so we do not overwrite index_version (and anything else updated by bump)
-                $cfg2 = (array) $this->chatai->promptService()->loadPromptSettings();
+                $cfg2 = (array) $this->chatAI()->promptService()->loadPromptSettings();
 
                 // Merge: start from stored cfg, then overlay the posted values (except you can skip index_version entirely)
                 unset($values['index_version']);
                 $merged = array_merge($cfg2, $values);
 
                 $this->_promptMemo = $merged;
-                $this->chatai->promptService()->savePromptSettings($this->_promptMemo);
+                $this->chatAI()->promptService()->savePromptSettings($this->_promptMemo);
 
             } else {
 //                $errors = $form->getErrors(); // array of error messages…
@@ -715,11 +601,10 @@ class ProcessChatAI extends Process
         if($wrapper) $wrapper->addClass('WireTab');
     }
 
-
     public function getValues($form) : array
     {
-        //$savedData = $this->chatai->promptService->loadPromptSettings();
-        $svc = $this->chatai->promptService();
+        //$savedData = $this->chatAI()->promptService->loadPromptSettings();
+        $svc = $this->chatAI()->promptService();
         $savedData = $svc->loadPromptSettings();
         if(!empty($savedData)) return $savedData;
 
@@ -753,141 +638,6 @@ class ProcessChatAI extends Process
         return $data;
     }
 
- /*   private function _savePromptSettingsJson(string $json): bool {
-        $chatai = $this->chatai;
-        $db = wire('database'); // WireDatabasePDO (PDO)
-        $table = $chatai::dbTablePrompt;
-
-        $sql = "INSERT INTO `$table` (id, json) VALUES (1, ?)
-            ON DUPLICATE KEY UPDATE json = VALUES(json), created = CURRENT_TIMESTAMP";
-
-        try {
-            $stmt = $db->prepare($sql);
-            $stmt->bindValue(1, $json, \PDO::PARAM_STR);
-            return $stmt->execute();
-        } catch(\Throwable $e) {
-            $this->wire('log')->save('chatai', "savePromptSettingsJson failed: " . $e->getMessage());
-            $this->error($this->_('Failed to save settings.'));
-            return false;
-        }
-    }*/
-
-/*    public function savePromptSettingsJson(string $json): bool
-    {
-        return $this->_savePromptSettingsJson($json);
-    }*/
-
-
-    public function loadPromptSettings(): array {
-        return $this->chatai->promptService()->loadPromptSettings();
-    }
-
-
-    public function getPrompt(): string {
-        return $this->chatai->promptService()->getPrompt();
-    }
-
-    public function getIntro(): string {
-        return $this->chatai->promptService()->getIntro();
-    }
-
-    public function getLanguageVal(string $name): string
-    {
-        return $this->chatai->promptService()->getLanguageVal($name);
-    }
-
-    public function getPlaceholder (): string
-    {
-        return $this->chatai->promptService()->getPlaceholder();
-    }
-
-    public function getButtonText (): string
-    {
-        return $this->chatai->promptService()->getSubmitButtonText();
-    }
-
-    public function getResetText (): string
-    {
-        return $this->chatai->promptService()->getResetText();
-    }
-
-    public function getThinkingText (): string
-    {
-        return $this->chatai->promptService()->getThinkingText();
-    }
-
-    public function getDisclaimerText (): string
-    {
-        return $this->chatai->promptService()->getDisclaimerText();
-    }
-
-    public function getFooterText (): string
-    {
-        return $this->chatai->promptService()->getFooterText();
-    }
-
-    public function getBotName (): string
-    {
-        return $this->chatai->promptService()->getBotName();
-    }
-
-    public function getWidget(string $path): string {
-        if(empty($this['values']))
-            $this['values'] = $this->loadPromptSettings();
-        $files = wire('files');
-        $intro = $this->getIntro();
-        $placeholder = $this->getPlaceholder();
-        $submitText = $this->getButtonText();
-        $resetText = $this->getResetText();
-        $thinkingText = $this->getThinkingText();
-        $disclaimerText = $this->getDisclaimerText();
-        $footerText = $this->getFooterText();
-        $widgetFile =  $files->render($path, [
-            'intro' => $intro,
-            'placeholder'=>$placeholder,
-            'button_text'=>$submitText,
-            'reset_text'=>$resetText,
-            'thinking_text'=>$thinkingText,
-            'disclaimer_text'=>$disclaimerText,
-            'footer_text'=>$footerText
-        ]);
-        return $widgetFile;
-    }
-
-
-    public function isBlacklistTerm($message): bool
-    {
-        $sanitizer = $this->wire('sanitizer');
-        $cfg       = $this->chatai->promptService()->loadPromptSettings();
-
-        if (empty($cfg['use_blacklist']) || empty($cfg['blacklist'])) {
-            return false;
-        }
-
-        $msg = mb_strtolower($sanitizer->text($message));
-        if ($msg === '') return false;
-
-        $terms = array_filter(array_map('trim', explode(',', $cfg['blacklist'])));
-
-        foreach ($terms as $t) {
-            $t = mb_strtolower($sanitizer->text($t));
-
-            // Convert "hang myself" → "hang\s+myself"
-            $pattern = '/\b' . preg_quote(str_replace(' ', '___SPACE___', $t), '/') . '\b/iu';
-            $pattern = str_replace('___SPACE___', '\s+', $pattern);
-
-            if (preg_match($pattern, $msg)) {
-                $this->wire('log')->save(
-                    'chatai-blacklist-debug',
-                    "Matched phrase '{$t}' in message: '{$msg}'"
-                );
-                return true;
-            }
-        }
-
-        return false;
-    }
-
 
     // Dashboard features
 
@@ -913,79 +663,96 @@ class ProcessChatAI extends Process
      * - $chunk: batch size for memory/time safety
      * Returns a summary array with counts.
      */
-    protected function runBackfillReconcile(bool $dryRun = false, $selector = '') : array {
-        $pages = $this->wire('pages');
-        $cfg   = $this->loadPromptSettings();
-        $rag   = new RAG();
-        $config = $this->wire('config');
 
-       // $guest = $this->wire('users')->getGuestUser();
-        //$http404 = $config->http404PageID;
+    protected function runBackfillReconcile(
+        string $selector,
+        int $startId = 0,
+        int $batchSize = 200,
+        bool $dryRun = false
+    ): array {
+
+        $pages  = $this->wire('pages');
+        $config = $this->wire('config');
+        $rag    = $this->chatAI()->rag();
+        $cfg    = $this->chatAI()->promptService()->loadPromptSettings();
+
+        if ($batchSize < 50)   $batchSize = 50;
+        if ($batchSize > 1000) $batchSize = 1000;
 
         $summary = [
-            'eligible_total' => 0,
-            'ineligible_total' => 0,
-            'indexed_new' => 0,
-            'indexed_replaced' => 0,
-            'deleted' => 0,
-            'errors' => 0,
-            'dry_run' => $dryRun,
- //           'chunk' => $cfg['rag_batch_size'],
-            'model' => $this->chatai->model ?? '',
+            'eligible_total'    => 0,
+            'ineligible_total'  => 0,
+            'indexed_new'       => 0,
+            'indexed_replaced'  => 0,
+            'deleted'           => 0,
+            'errors'            => 0,
+            'dry_run'           => $dryRun,
+            'model'             => $this->chatAI()->model ?? '',
+            'start_id'          => $startId,
+            'last_id'           => 0,
+            'last_ok_id'        => 0,
+            'current_id'        => 0,
         ];
 
-        // Broad candidate scan — you may narrow by templates/parents in RAG::shouldIndexPage
-        //$selector = "has_parent!=2, status!=trash, id!=$http404, template!=http404, include=hidden";
-        $total = $pages->count($selector);
-        $offset = 0;
+        foreach ($pages->find($selector) as $page) {
 
-        while ($offset < $total) {
-            //foreach ($pages->find("$selector, start=$offset, limit=$chunk") as $page) {
-            foreach ($pages->find($selector) as $page) {
-                try {
-                    // Decide eligibility (same as saveReady)
-                    $eligible = $this->chatai->validTemplate($page, $cfg);
-                    $inDb     = $rag->shouldReindex($page);
+            $summary['current_id'] = $page->id;
 
-                    if ($eligible) $summary['eligible_total']++; else $summary['ineligible_total']++;
+            try {
+                $eligible = $this->chatAI()->validTemplate($page, $cfg);
+                $inDb     = $rag->shouldReindex($page);
 
-                    if (!$eligible) {
-                        if ($inDb && $page->isTrash()) {
-                            if (!$dryRun) $rag->deletePageVectors($page);
-                            $summary['deleted']++;
-                            $this->backfillLog(['ev'=>'delete', 'id'=>$page->id, 'url'=>$page->url]);
-                        }
-
-                        if($page->id === $config->http404PageID) {
-                            $this->backfillLog(['ev'=>'warn_excluded', 'id'=>$page->id, 'reason'=>'id denylist']);
-                        }
-                        continue;
-                    }
-
-                    // Eligible
-                    if (!$inDb) {
-                        if (!$dryRun) $rag->collectPageText($page, $cfg);
-                        $summary['indexed_new']++;
-                        $this->backfillLog(['ev'=>'index_new', 'id'=>$page->id, 'url'=>$page->url]);
-                        continue;
-                    } else {
-                        // Already in DB
-                        if (!$dryRun) {
-                            $rag->deletePageVectors($page);
-                            $rag->collectPageText($page, $cfg);
-                            $this->backfillLog(['ev' => 'index_upd', 'id' => $page->id, 'url' => $page->url]);
-                        }
-                        $summary['indexed_replaced']++;
-                        continue;
-                    }
-
-                } catch (\Throwable $e) {
-                    $summary['errors']++;
-                    $this->backfillLog(['ev'=>'error', 'id'=>$page->id ?? 0, 'msg'=>$e->getMessage()]);
+                if ($eligible) {
+                    $summary['eligible_total']++;
+                } else {
+                    $summary['ineligible_total']++;
                 }
+
+                if (!$eligible) {
+
+                    if ($inDb && $page->isTrash()) {
+                        if (!$dryRun) $rag->deletePageVectors($page);
+                        $summary['deleted']++;
+                        $this->backfillLog(['ev'=>'delete', 'id'=>$page->id, 'url'=>$page->url]);
+                    }
+
+                    if ($page->id === $config->http404PageID) {
+                        $this->backfillLog([
+                            'ev'     => 'warn_excluded',
+                            'id'     => $page->id,
+                            'reason' => 'http404'
+                        ]);
+                    }
+
+                    continue;
+                }
+
+                // Eligible
+                if (!$inDb) {
+                    if (!$dryRun) $rag->collectPageText($page, $cfg);
+                    $summary['indexed_new']++;
+                    $this->backfillLog(['ev'=>'index_new', 'id'=>$page->id, 'url'=>$page->url]);
+                } else {
+                    if (!$dryRun) {
+                        $rag->deletePageVectors($page);
+                        $rag->collectPageText($page, $cfg);
+                    }
+                    $summary['indexed_replaced']++;
+                    $this->backfillLog(['ev'=>'index_upd', 'id'=>$page->id, 'url'=>$page->url]);
+                }
+
+                $summary['last_ok_id'] = $page->id;
+                $summary['last_id']    = $page->id;
+
+            } catch (\Throwable $e) {
+                $summary['errors']++;
+                $this->backfillLog([
+                    'ev'         => 'error',
+                    'id'         => $page->id,
+                    'last_ok_id' => $summary['last_ok_id'],
+                    'msg'        => $e->getMessage()
+                ]);
             }
-            //$offset += $chunk;
-            $offset += 200;
         }
 
         $this->backfillLog(['ev'=>'summary'] + $summary);
@@ -994,13 +761,10 @@ class ProcessChatAI extends Process
 
     public function actionReindexAll($selector, int $langId = 0 ) : void {
 
-        $indexer = new \ProcessWire\ChatAIIndexer();
+        $indexer = $this->chatAI()->indexer();
         $indexer->setWire($this->wire());
-        $cfg = $this->loadPromptSettings();
+        $cfg = $this->chatAI()->promptService()->loadPromptSettings();
 
-
-        //$pages = $this->wire('pages')->findMany('has_parent!=2, include=visible, template!=admin');
-        //$pages = $this->wire('pages')->findMany('has_parent!=2, template!=admin');
         $pages = $this->wire('pages')->findMany($selector);
 
         $languages = $this->wire('languages');
@@ -1014,11 +778,9 @@ class ProcessChatAI extends Process
         $next = $indexer->bumpIndexVersion();
 
         $cfg['index_version'] = $next;
-        //$this->savePromptSettingsJson(json_encode($cfg));
-        $this->chatai->promptService()->savePromptSettings($cfg);
+        $this->chatAI()->promptService()->savePromptSettings($cfg);
         $this->_promptMemo = $cfg;
         $this->message('Reindex complete.');
     }
-
 
 }

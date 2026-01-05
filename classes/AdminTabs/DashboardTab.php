@@ -79,9 +79,9 @@ class DashboardTab
             $volumeData   = [];
             $snapshot     = [];
 
-            $chatAI       = $m->get('ChatAI');
-            if($chatAI && method_exists($chatAI, 'getObsLog')) {
-                $logger = $chatAI->getObsLog();
+            $chatAI      = $m->get('ChatAI');
+            if($chatAI && method_exists($chatAI, 'logger')) {
+                $logger = $chatAI->logger();
 
                 if($logger && method_exists($logger, 'fetchSummary')) {
                     $eventSummary = $logger->fetchSummary();
@@ -118,7 +118,7 @@ class DashboardTab
         $chatprocess = $m->get('ProcessChatAI');
         $insights = $m->get('InputfieldMarkup');
         $insights->label = $m->_('Insights');
-        $insights->attr('id', 'chatai-dashboard-insights');
+        $insights->attr('id', 'chatAI-dashboard-insights');
         $json = json_decode($chatprocess->renderInsightsJson());
         $insights->value = $json->html ?? '';
         $inputfields->add($insights);
@@ -133,16 +133,16 @@ class DashboardTab
         );
 
         // Selector
-        $selector = $m->get('InputfieldText');
-        $selector->name = 'rag_selector';
-        $selector->label = $m->_('Page selector');
-        $selector->value = 'has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404';
-        $selector->notes = $m->_(
-            'ProcessWire selector used to find pages for indexing. ' .
-            'Default: has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404 ' .
-            'Do not include id>, sort, or limit; these are applied automatically.'
-        );
-        $bf->add($selector);
+//        $selector = $m->get('InputfieldText');
+//        $selector->name = 'rag_selector';
+//        $selector->label = $m->_('Page selector');
+//        $selector->value = 'has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404';
+//        $selector->notes = $m->_(
+//            'ProcessWire selector used to find pages for indexing. ' .
+//            'Default: has_parent!=2, include=all, template!=admin, id!=$http404, template!=http404 ' .
+//            'Do not include id>, sort, or limit; these are applied automatically.'
+//        );
+//        $bf->add($selector);
 
         // Start ID
         $startId = $m->get('InputfieldInteger');
