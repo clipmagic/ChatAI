@@ -8,10 +8,14 @@ class ChatAIPromptService extends Wire {
 
     public function loadPromptSettings(bool $force = false): array
     {
-        if (is_array($this->promptMemo)) return $this->promptMemo;
-
         $cache = $this->wire('cache');
-        if ($force) $cache->deleteFor('chatai', 'promptSettings');
+
+        if ($force) {
+            $this->promptMemo = null; // or [] if you prefer
+            $cache->deleteFor('chatai', 'promptSettings');
+        } else {
+            if (is_array($this->promptMemo)) return $this->promptMemo;
+        }
 
         $cfg = $cache->getFor('chatai', 'promptSettings', self::PROMPT_TTL, function () {
             $chatai = $this->wire('modules')->get('ChatAI');
@@ -30,6 +34,7 @@ class ChatAIPromptService extends Wire {
 
         return $this->promptMemo = (is_array($cfg) ? $cfg : []);
     }
+
 
     public function getLanguageVal(string $name): string {
         $cfg = $this->loadPromptSettings();

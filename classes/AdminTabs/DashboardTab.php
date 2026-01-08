@@ -37,6 +37,7 @@ class DashboardTab
         $f->label = $m->_('Success rate warning threshold (%)');
         $f->description = $m->_('Below this success rate the dashboard will flag issues. Default is 85%.');
         $f->value = (int)($data['obs_kpi_success_warn_pct'] ?? 85);
+        $f->attr('type', 'number');
         $f->min = 1;
         $f->max = 100;
         $f->columnWidth(33);
@@ -48,6 +49,7 @@ class DashboardTab
         $f->label = $m->_('Average latency warning (ms)');
         $f->description = $m->_('Above this average latency the dashboard will warn that the bot may feel slow. Default is 5000 ms.');
         $f->value = (int)($data['obs_kpi_latency_warn_ms'] ?? 5000);
+        $f->attr('type', 'number');
         $f->min = 100;
         $f->max = 60000;
         $f->columnWidth(33);
@@ -59,6 +61,7 @@ class DashboardTab
         $f->label = $m->_('Average latency high (ms)');
         $f->description = $m->_('Above this average latency the dashboard will highlight performance as poor. Default is 8000 ms.');
         $f->value = (int)($data['obs_kpi_latency_high_ms'] ?? 8000);
+        $f->attr('type', 'number');
         $f->min = 100;
         $f->max = 60000;
         $f->columnWidth(34);
@@ -118,7 +121,7 @@ class DashboardTab
         $chatprocess = $m->get('ProcessChatAI');
         $insights = $m->get('InputfieldMarkup');
         $insights->label = $m->_('Insights');
-        $insights->attr('id', 'chatAI-dashboard-insights');
+        $insights->attr('id', 'chatai-dashboard-insights');
         $json = json_decode($chatprocess->renderInsightsJson());
         $insights->value = $json->html ?? '';
         $inputfields->add($insights);
@@ -148,6 +151,7 @@ class DashboardTab
         $startId = $m->get('InputfieldInteger');
         $startId->name = 'rag_start_id';
         $startId->label = $m->_('Start from page ID');
+        $startId->attr('type', 'number');
         $startId->value = 0;
         $startId->min = 0;
         $startId->notes = $m->_(
@@ -162,6 +166,7 @@ class DashboardTab
         $batch->name = 'rag_batch_size';
         $batch->label = $m->_('Batch size (50–1000)');
         $batch->value = 200;
+        $batch->attr('type', 'number');
         $batch->min = 50;
         $batch->max = 1000;
         $batch->columnWidth(50);

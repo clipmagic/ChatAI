@@ -105,7 +105,6 @@ class ProcessChatAI extends Process
         }
 
         // preview
-
         $form->prompt->prompt_preview->attr('value', $svc->getPrompt());
 
         // one-shot
@@ -409,7 +408,6 @@ class ProcessChatAI extends Process
 
         // Dev hook: last chance to refine selector string
         $selector = $this->buildReindexSelector($selector);
-
         return trim($selector);
     }
 
@@ -521,45 +519,41 @@ class ProcessChatAI extends Process
 
         if($form->isSubmitted()) {
             $inputPost = $this->wire('input')->post;
-
             $inputProcessed = true;
+            $values = [];
+
             foreach($form->children as $tab) {
-                if(!$tab->processInput($inputPost)) {
-                    $inputProcessed = false;
-                    break;
+                if (!$tab->children) continue;
+                foreach ($inputPost as $key => $value) {
+                    $fld = $tab->getChildByName($key);
+                    if(!$fld) continue;
+                    if(empty($key) || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
+
+                    if (!$fld->processInput($inputPost)) {
+                        $inputProcessed = false;
+                        break 2;
+                    }
+                    $values[$key] = $fld->value;
                 }
             }
-            if ($inputProcessed ) {
-                $values = [];
-                foreach ($inputPost as $key => $value) {
-                    if($key === '' || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
-                    $values[$key] = $value;
-                }
-                $cfg = $this->chatAI()->promptService()->loadPromptSettings();
 
-                $values['index_version'] = isset($cfg['index_version']) ? $cfg['index_version'] + 1 : 1;
-                $values['rag_candidate_templates'] = $this->chatAI()->asmToIds($values['rag_candidate_templates'] ?? []);
-                $values['rag_exclude_templates'] = $this->chatAI()->asmToIds($values['rag_exclude_templates'] ?? []);
+            if ($inputProcessed) {
 
-                $this->_promptMemo = $values;
-                $this->chatAI()->promptService()->savePromptSettings($this->_promptMemo);
-
-                $prefixes = $this->chatAI()->classifer()->dictionaryPrefixes();
-
+                $chatAI = $this->chatAI();
+                $cfg = (array) $chatAI->promptService()->loadPromptSettings();
+                $nextVer = null;
+                $prefixes = $chatAI->classifer()->dictionaryPrefixes();
                 $shouldBump = false;
 
-                // Check both direct keys and suffixed keys: prefix and prefix_*
                 foreach ($prefixes as $p) {
-                    // direct key
-                    if (array_key_exists($p, $values) && (string)($cfg[$p] ?? '') !== (string)$values[$p]) {
+                    if (array_key_exists($p, $values) && (string) ($cfg[$p] ?? '') !== (string) $values[$p]) {
                         $shouldBump = true;
                         break;
                     }
 
-                    // suffixed keys: scan new values for prefix_*
                     foreach ($values as $k => $v) {
-                        if ($k === $p || str_starts_with((string)$k, $p . '_')) {
-                            if ((string)($cfg[$k] ?? '') !== (string)$v) {
+                        if ($k === $p || str_starts_with((string) $k, $p . '_')) {
+                            if ((string) ($cfg[$k] ?? '') !== (string) $v) {
                                 $shouldBump = true;
                                 break 2;
                             }
@@ -567,28 +561,20 @@ class ProcessChatAI extends Process
                     }
                 }
 
-
-                // If bump needed, bump using indexer helper and bust old cache
                 if ($shouldBump) {
-                    $oldVer = $this->indexer->getIndexVersion();
-                    $this->indexer->bumpIndexVersion(); // updates stored prompt settings
-                    if ($oldVer) $this->wire('cache')->deleteFor('chatai', "dict:v{$oldVer}:all");
+                    $nextVer = $chatAI->indexer()->bumpIndexVersion(); // also busts dict cache internally
                 }
 
-                // Reload prompt settings so we do not overwrite index_version (and anything else updated by bump)
-                $cfg2 = (array) $this->chatAI()->promptService()->loadPromptSettings();
-
-                // Merge: start from stored cfg, then overlay the posted values (except you can skip index_version entirely)
                 unset($values['index_version']);
-                $merged = array_merge($cfg2, $values);
+                if ($nextVer !== null) {
+                    $values['index_version'] = $nextVer;
+                }
 
-                $this->_promptMemo = $merged;
-                $this->chatAI()->promptService()->savePromptSettings($this->_promptMemo);
+                $merged = array_merge($cfg, $values);
+                $chatAI->promptService()->savePromptSettings($merged);
 
             } else {
-//                $errors = $form->getErrors(); // array of error messages…
-                $inputs = $form->getErrorInputfields(); // …or array of Inputfields with errors
-                $text = "<h3 class='error'>" .$this->_('Your form has errors. Please fix') . "</h3>\n";
+                $text = "<h3 class='error'>" . $this->_('Your form has errors. Please fix') . "</h3>\n";
                 return $text . $form->render();
             }
         }
@@ -603,7 +589,6 @@ class ProcessChatAI extends Process
 
     public function getValues($form) : array
     {
-        //$savedData = $this->chatAI()->promptService->loadPromptSettings();
         $svc = $this->chatAI()->promptService();
         $savedData = $svc->loadPromptSettings();
         if(!empty($savedData)) return $savedData;
@@ -641,22 +626,6 @@ class ProcessChatAI extends Process
 
     // Dashboard features
 
-    /** Path to backfill log */
-    protected function backfillLogPath(): string {
-        $config = $this->wire('config');
-        $dir = $config->paths->logs . 'chatai';
-        if (!is_dir($dir)) @mkdir($dir, $config->chmodDir, true);
-        return $dir . '/chatai_backfill.txt';
-    }
-
-    /** Append a JSON line to the backfill log */
-    protected function backfillLog(array $row): void {
-        $row['t'] = date('c');
-        $logPath = $this->backfillLogPath();
-        @file_put_contents($logPath, json_encode($row) . PHP_EOL, FILE_APPEND);
-    }
-
-
     /**
      * Run Backfill & Reconcile across the site.
      * - $dryRun: don't write vectors, only report
@@ -672,7 +641,6 @@ class ProcessChatAI extends Process
     ): array {
 
         $pages  = $this->wire('pages');
-        $config = $this->wire('config');
         $rag    = $this->chatAI()->rag();
         $cfg    = $this->chatAI()->promptService()->loadPromptSettings();
 
@@ -700,7 +668,7 @@ class ProcessChatAI extends Process
 
             try {
                 $eligible = $this->chatAI()->validTemplate($page, $cfg);
-                $inDb     = $rag->shouldReindex($page);
+                $inDb     = $rag->shouldReindexBulk($page);
 
                 if ($eligible) {
                     $summary['eligible_total']++;
@@ -709,21 +677,10 @@ class ProcessChatAI extends Process
                 }
 
                 if (!$eligible) {
-
                     if ($inDb && $page->isTrash()) {
                         if (!$dryRun) $rag->deletePageVectors($page);
                         $summary['deleted']++;
-                        $this->backfillLog(['ev'=>'delete', 'id'=>$page->id, 'url'=>$page->url]);
                     }
-
-                    if ($page->id === $config->http404PageID) {
-                        $this->backfillLog([
-                            'ev'     => 'warn_excluded',
-                            'id'     => $page->id,
-                            'reason' => 'http404'
-                        ]);
-                    }
-
                     continue;
                 }
 
@@ -731,14 +688,12 @@ class ProcessChatAI extends Process
                 if (!$inDb) {
                     if (!$dryRun) $rag->collectPageText($page, $cfg);
                     $summary['indexed_new']++;
-                    $this->backfillLog(['ev'=>'index_new', 'id'=>$page->id, 'url'=>$page->url]);
                 } else {
                     if (!$dryRun) {
                         $rag->deletePageVectors($page);
                         $rag->collectPageText($page, $cfg);
                     }
                     $summary['indexed_replaced']++;
-                    $this->backfillLog(['ev'=>'index_upd', 'id'=>$page->id, 'url'=>$page->url]);
                 }
 
                 $summary['last_ok_id'] = $page->id;
@@ -754,8 +709,6 @@ class ProcessChatAI extends Process
                 ]);
             }
         }
-
-        $this->backfillLog(['ev'=>'summary'] + $summary);
         return $summary;
     }
 
@@ -782,5 +735,4 @@ class ProcessChatAI extends Process
         $this->_promptMemo = $cfg;
         $this->message('Reindex complete.');
     }
-
 }

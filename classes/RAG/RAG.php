@@ -42,7 +42,7 @@ class RAG extends Wire {
      *************************/
 
     /** Page must use a configured template to be indexed. */
-    public function shouldIndexPage(Page $page, array $cfg): bool {
+    public function shouldIndexPage(Page $page): bool {
 
       //  $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $chatai = $this->wire('modules')->get('ChatAI');
@@ -51,7 +51,7 @@ class RAG extends Wire {
         $cfg = $chatai->promptService()->loadPromptSettings();
 
         if(!$chatai->validTemplate($page, $cfg)) return false;
-        if ($page->id === $config->http404PageID) return false;                         // your 404 page (or use config)
+        if ($page->id === $config->http404PageID) return false;
         if (in_array($page->template->name, ['http404'], true)) return false;
         if (in_array($page->name, ['http404'], true)) return false;
         if (!$page->isPublic()) return false;
@@ -64,7 +64,7 @@ class RAG extends Wire {
      * - returns true if page has no vectors OR the latest vector is older than $page->modified
      * - returns false if vectors exist and are up-to-date
      */
-    public function shouldReindex(Page $page): bool
+    public function shouldReindexBulk(Page $page): bool
     {
         $db    = $this->wire('database');
         $tbl   = $db->escapeTable(self::CHATAI_VEC_TABLE);

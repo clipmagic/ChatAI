@@ -5,7 +5,7 @@
     - What ChatAI Is Not
     - Who ChatAI Is For
 
-1. How ChatAI Works (High-Level Overview)
+1. [How ChatAI Works] (#how-chatai-works) High-Level Overview)
     - Core Concepts
     - Request and Response Flow
     - Token-Aware Behaviour

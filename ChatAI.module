@@ -77,53 +77,44 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // Hooks
         $this->addHookAfter('Pages::saved', function ($event) {
-            $page = $event->arguments(0);
-            $changes = (array)($event->arguments(1) ?? []);
+            $page    = $event->arguments(0);
+            $changes = (array) ($event->arguments(1) ?? []);
 
             $chatai = $this->wire('modules')->get('ChatAI');
+            if (!$chatai) return;
 
-            $svc = $chatai->promptService();
-            $cfg = $svc->loadPromptSettings();
+            $cfg = (array) $chatai->promptService()->loadPromptSettings();
+            if (empty($cfg['chunk_on_save'])) return;
 
-            if(!isset($cfg['chunk_on_save'])) return;
             $rag = $chatai->rag();
 
-            try {
-                $shouldReindex = $rag->shouldReindex($page);
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', 'shouldReindex error: ' . $e->getMessage());
-            }
-
-            $changedKeys = array_keys($changes);
+            $changedKeys    = array_keys($changes);
             $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
             $contentChanged = !empty($meaningfulKeys);
 
-            if (!$shouldReindex && !$contentChanged) {
+            $isIndexableNow = $rag->shouldIndexPage($page);
+
+            // Optional hook override
+            if ($isIndexableNow && !$this->isEligibleForChat($page)) {
+                $isIndexableNow = false;
+            }
+
+            if (!$isIndexableNow) {
+                try {
+                    $rag->deletePageVectors($page);
+                } catch (\Throwable $e) {
+                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id {$page->id}: " . $e->getMessage());
+                }
                 return;
             }
 
-            if($page->isTrash() || !$chatai->validTemplate($page, $cfg)) {
-                try {
-                    $rag->deletePageVectors($page);
-                } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id $page->id: " . $e->getMessage());
-                }
-            }
+            if (!$contentChanged) return;
 
-            if ($contentChanged && $shouldReindex) {
-                try {
-                    $rag->deletePageVectors($page);
-                    $languages = $this->wire('languages');
-                    if($languages && $languages->count()) {
-                        foreach($languages as $lang) {
-                            $rag->collectPageText($page, $cfg);
-                        }
-                    } else {
-                        $rag->collectPageText($page, $cfg);
-                    }
-                } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', "Index upsert error, Page id $page->id : " . $e->getMessage());
-                }
+            try {
+                $rag->deletePageVectors($page);
+                $rag->collectPageText($page, $cfg);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai', "Index upsert error, Page id {$page->id}: " . $e->getMessage());
             }
         });
 
@@ -333,10 +324,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $this->promptService;
     }
 
-
-
-
-
     public function renderWidget() : string
     {
         $config = wire('config');
@@ -358,7 +345,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
 
     public function isMessageAllowed($message) : \stdClass {
-       // $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $session     = $this->wire('session');
 
         $output = new \stdClass(); // optional: fully qualify
@@ -390,7 +376,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         if ($strikes && $strikes >= $this->max_strikes) {
             $output->stop          = true;
-            $output->blacklistTerm = true;       // optional: also set $output->blacklisted = true;
+            $output->blacklistTerm = true;
             $output->blacklisted   = true;
             $err = $this->getErrorMessage(13);
 
@@ -1020,63 +1006,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     // logs one compact event to chatai_obslog
     protected function obsLog($result, array $meta = []): void
     {
-        // 1) Normalise result to array
-        if (is_object($result)) {
-            $result = json_decode(json_encode($result), true);
-        }
-        $result = is_array($result) ? $result : [];
+        $logger = $this->getObsLog();
+        if (!$logger) return;
 
-        // 2) Build core payload
-        $ok      = (bool)($result['ok'] ?? false);
-        $errCode = $result['error'] ?? null;
-
-        // Ignore empty, non-informative calls (no meta, no ok flag, no error)
-        if (!$ok && $errCode === null && empty($meta)) {
-            return;
-        }
-
-        $out = [
-            't'        => date('c'),
-            'event'    => $meta['event'] ?? 'reply',
-            'ok'       => $ok,
-            'err_code' => $errCode,
-        ];
-
-        // Merge caller meta (latency, model, lang, etc)
-        foreach ($meta as $k => $v) {
-            $out[$k] = $v;
-        }
-
-        // 3) Map to obslog columns
-        $chatId    = isset($out['chat_id']) ? (string) $out['chat_id'] : '';
-        $eventType = isset($out['event']) ? (string) $out['event'] : 'reply';
-        $status    = $ok ? 'ok' : 'failed';
-        $model     = isset($out['model']) ? (string) $out['model'] : '';
-
-        // Everything else goes into meta JSON
-        $metaForDb = $out;
-        unset($metaForDb['t'], $metaForDb['event']);
-
-        // 4) Write to chatai_obslog via ChatAI service
-        try {
-            /** @var \ProcessWire\ChatAI|null $chatAI */
-            $chatAI = $this->wire('modules')->get('ChatAI');
-            if (!$chatAI || !method_exists($chatAI, 'getObsLog')) return;
-
-            $logger = $chatAI->getObsLog();
-            if (!$logger) return;
-
-            $logger->log($eventType, [
-                'chat_id' => $chatId,
-                'status'  => $status,
-                'model'   => $model,
-                'meta'    => $metaForDb,
-            ]);
-
-        } catch (\Throwable $e) {
-            // Final safety net: nothing here should ever break chat
-            $this->wire('log')->save('chatai-obslog', $e->getMessage());
-        }
+        // Delegate. ChatAI should not assemble obslog payloads.
+        $logger->logFromResult($result, $meta);
     }
 
     /** @return array{preview:string, hash:string} */
@@ -1410,20 +1344,19 @@ SQL;
     /** @param array $payload */
     public function ___afterResponse(array $payload): array { return $payload; }
 
-
-
-    /* Determine if page eligible for indexing and rag */
-    protected function asmToIds($val): array {
-        if ($val instanceof \ProcessWire\WireArray) $val = $val->getArray();
-        if (!is_array($val)) return [];
-        return array_values(array_unique(array_map('intval', $val)));
+    public function ___isEligibleForChat(Page $page): bool
+    {
+        // Default: do not change existing behaviour.
+        // Developers can hook this to return false based on field values.
+        return true;
     }
+
 
     public function validTemplate(Page $p, array $cfg): bool {
         if (!$p->id || !$p->isPublic()) return false;
-       
-        $inclIds = $this->asmToIds($cfg['rag_candidate_templates'] ?? []);
-        $exclIds = $this->asmToIds($cfg['rag_exclude_templates'] ?? []);
+
+        $inclIds = $cfg['rag_candidate_templates'] ?? [];
+        $exclIds = $cfg['rag_exclude_templates'] ?? [];
 
         $tplId = (int) $p->template->id;
         if (!empty($exclIds) && in_array($tplId, $exclIds)) return false;
@@ -1431,8 +1364,6 @@ SQL;
         if ($p->hasField('chatai_exclude') && $p->chatai_exclude) return false;
         return true;
     }
-
-
 
     /* Install, Upgrade, Uninstall */
 

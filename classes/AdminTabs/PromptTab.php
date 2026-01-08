@@ -150,6 +150,7 @@ class PromptTab
         $f->notes("");
         $value = $data['context_limit'] ?? 12;
         $f->val($value);
+        $f->attr('type','number');
         $f->stripTags = true;
         $f->columnWidth(20);
         $fieldset->add($f);
@@ -161,6 +162,7 @@ class PromptTab
         $f->notes("");
         $value = $data['context_snippet_len'] ?? 400;
         $f->val($value);
+        $f->attr('type','number');
         $f->stripTags = true;
         $f->columnWidth(20);
         $fieldset->add($f);

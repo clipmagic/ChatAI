@@ -43,8 +43,6 @@ document.addEventListener('DOMContentLoaded', function () {
                 return res.json();
             })
             .then(function(s) {
-                console.log(s)
-
                 if (!s) return;
 
                 setText('kpi-chats', s.total_chats);
@@ -220,7 +218,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!t.insightsUrl) return;
 
         var url = t.insightsUrl + '&days=' + encodeURIComponent(days);
-        var body = document.querySelector('#chatai-dashboard-insights .InputfieldContent');        if (!body) return;
+        var body = document.querySelector('#chatai-dashboard-insights .InputfieldContent');
+        if (!body) return;
 
         fetch(url, { credentials: 'same-origin' })
             .then(function (res) {
@@ -229,6 +228,7 @@ document.addEventListener('DOMContentLoaded', function () {
             })
             .then(function (data) {
                 if (!data || typeof data.html !== 'string') return;
+                console.log(data.html)
                 body.innerHTML = data.html;
             })
             .catch(function (err) {

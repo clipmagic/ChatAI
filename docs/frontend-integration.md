@@ -110,9 +110,6 @@ The widget template expects the following variables to be available at render ti
 - `$disclaimer_text`  
   Text shown in the footer disclaimer area.
 
-- `$footer_text`  
-  Additional footer content (often links or supporting information).
-
 It also references:
 
 - `$page->id`  

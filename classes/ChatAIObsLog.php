@@ -16,22 +16,22 @@ class ChatAIObsLog extends Wire
      * @param string $eventType  e.g. "message", "cutoff", "blocked", "rate_limit", "error"
      * @param array  $data       keys: chat_id, status, model, meta
      */
-    public function log(string $eventType, array $data = []): void
+    public function writeEvent(string $eventType, array $data = []): void
+
     {
         try {
-            $db  = $this->wire('database');
+            $db = $this->wire('database');
             $now = date('Y-m-d H:i:s');
 
-            $chatId = isset($data['chat_id']) ? (string) $data['chat_id'] : '';
-            $status = isset($data['status']) ? (string) $data['status'] : 'ok';
-            $model  = isset($data['model'])  ? (string) $data['model']  : '';
-            $meta   = $data['meta'] ?? [];
+            $chatId = isset($data['chat_id']) ? (string)$data['chat_id'] : '';
+            $status = isset($data['status']) ? (string)$data['status'] : 'ok';
+            $model = isset($data['model']) ? (string)$data['model'] : '';
 
-            if(!is_string($meta)) {
-                $json = json_encode(
-                    $meta,
-                    JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                );
+            $meta = $data['meta'] ?? [];
+            if (!is_string($meta)) {
+                if (!is_array($meta)) $meta = ['value' => $meta];
+                $json = json_encode($meta, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PARTIAL_OUTPUT_ON_ERROR);
+
                 $meta = $json !== false ? $json : '';
             }
 
@@ -43,15 +43,15 @@ class ChatAIObsLog extends Wire
             ";
 
             $stmt = $db->prepare($sql);
-            $stmt->bindValue(':created',    $now);
-            $stmt->bindValue(':chat_id',    $chatId);
+            $stmt->bindValue(':created', $now);
+            $stmt->bindValue(':chat_id', $chatId);
             $stmt->bindValue(':event_type', $eventType);
-            $stmt->bindValue(':status',     $status);
-            $stmt->bindValue(':model',      $model);
-            $stmt->bindValue(':meta',       $meta);
+            $stmt->bindValue(':status', $status);
+            $stmt->bindValue(':model', $model);
+            $stmt->bindValue(':meta', $meta);
             $stmt->execute();
 
-        } catch(\Throwable $e) {
+        } catch (\Throwable $e) {
             // Never let logging break chat
             $this->wire('log')->save('chatai-obslog', $e->getMessage());
         }
@@ -522,5 +522,49 @@ class ChatAIObsLog extends Wire
             return [];
         }
     }
+
+    public function logFromResult($result, array $meta = []): void
+    {
+        $result = $this->normaliseResult($result);
+
+        $ok      = (bool) ($result['ok'] ?? false);
+        $errCode = $result['error'] ?? null;
+
+        if (!$ok && $errCode === null && empty($meta)) return;
+
+        $eventType = (string) ($meta['event'] ?? 'reply');
+        $chatId    = isset($meta['chat_id']) ? (string) $meta['chat_id'] : '';
+        $model     = isset($meta['model']) ? (string) $meta['model'] : '';
+        $status    = $ok ? 'ok' : 'failed';
+
+        $metaForDb = $meta;
+        unset($metaForDb['event']);
+
+        // optional: avoid duplicating columns inside meta
+        unset($metaForDb['chat_id'], $metaForDb['model'], $metaForDb['status']);
+
+        $metaForDb['t']  = date('c');
+        $metaForDb['ok'] = $ok;
+        if ($errCode !== null) $metaForDb['err_code'] = $errCode;
+
+        $this->writeEvent($eventType, [
+            'chat_id' => $chatId,
+            'status'  => $status,
+            'model'   => $model,
+            'meta'    => $metaForDb,
+        ]);
+    }
+
+    protected function normaliseResult($result): array
+    {
+        if (is_array($result)) return $result;
+        if (is_object($result) && method_exists($result, 'toArray')) {
+            $arr = $result->toArray();
+            return is_array($arr) ? $arr : [];
+        }
+        if (is_object($result)) return (array) $result;
+        return [];
+    }
+
 
 }
