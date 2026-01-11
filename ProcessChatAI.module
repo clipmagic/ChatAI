@@ -14,16 +14,10 @@
 
 namespace ProcessWire;
 
-
 require_once (__DIR__ . "/classes/AdminTabs/DashboardTab.php");
 require_once (__DIR__ . "/classes/AdminTabs/PersonaliseTab.php");
 require_once (__DIR__ . "/classes/AdminTabs/PromptTab.php");
 require_once (__DIR__ . "/classes/AdminTabs/DictionaryTab.php");
-require_once (__DIR__ . "/classes/RAG/RAG.php");
-require_once (__DIR__ . '/classes/Indexing/ChatAIIndexer.php');
-require_once (__DIR__ . '/classes/Indexing/IndexContentExtractor.php');
-require_once (__DIR__ . '/classes/Classifier.php');
-
 
 class ProcessChatAI extends Process
 {
@@ -80,6 +74,7 @@ class ProcessChatAI extends Process
         if ($this->wire('input')->requestMethod('POST')) return;
 
         $cfg = $svc->loadPromptSettings();
+        bd($cfg);
 
         if(empty($cfg)) {
             $cfg = $this->getValues($form);
@@ -114,7 +109,6 @@ class ProcessChatAI extends Process
     protected function chatAI(): \ProcessWire\ChatAI {
         return $this->wire('modules')->get('ChatAI');
     }
-
 
     // Tab builders (lazy-loaded or simple new)
     protected function tabs(array $tab): array
@@ -498,17 +492,43 @@ class ProcessChatAI extends Process
         // Handle "Run Backfill & Reconcile" for vector db
         if($input->post->rag_run_reindex) {
             $selector = $this->buildRagReindexSelectorFromPost();
-            bd($selector);
-            $dryRun = $input->post->rag_dry_run ?? 0;
-            $batchSize = (int) $input->post->rag_batch_size ?? 200;
-            $startId = (int) $input->post->rag_start_id ?? 0;
+            $dryRun = !empty($input->post->rag_dry_run);
+            $forceRebuild = !empty($input->post->rag_force_rebuild);
+            $batchSize = (int) ($input->post->rag_batch_size ?? 200);
+            $startId   = (int) ($input->post->rag_start_id ?? 0);
             $t0 = microtime(true);
 
-            $summary = $this->runBackfillReconcile($selector, $startId, $batchSize, $dryRun);
+            $summary = $this->runBackfillReconcile($selector, $startId, $batchSize, $dryRun, $forceRebuild);
             $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
 
             $this->message($this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary));
-            $this->actionReindexAll($selector);
+            if(!empty($summary['_warn'])) {
+                $this->warning($summary['_warn']);
+                unset($summary['_warn']); // keep the JSON summary clean
+            }
+        }
+
+        if($input->post->rag_run_remove) {
+            $sanitizer = $this->wire('sanitizer');
+            $selector = $sanitizer->text($input->post->rag_remove_selector);
+            if(!empty($selector)) {
+                $pages = $this->wire('pages');
+                $pagesToRemove = $pages->findMany($selector);
+                if(!empty($pagesToRemove)) {
+                    $chatai = $this->wire('modules')->get('ChatAI');
+                    $rag  = $chatai->rag();
+                    foreach($pagesToRemove as $page) {
+                        try {
+                            $rag->deletePageVectors($page);
+                        }
+                        catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage());
+                        }
+                    }
+                } else {
+                    $this->message(_("No pages to remove"));
+                }
+
+            }
         }
 
         // Submit button
@@ -522,21 +542,42 @@ class ProcessChatAI extends Process
             $inputProcessed = true;
             $values = [];
 
-            foreach($form->children as $tab) {
+            foreach ($form->children as $tab) {
                 if (!$tab->children) continue;
-                foreach ($inputPost as $key => $value) {
-                    $fld = $tab->getChildByName($key);
-                    if(!$fld) continue;
-                    if(empty($key) || $key === 'submit' || $key === '_InputfieldForm' || str_starts_with($key, 'TOKEN')) continue;
 
-                    if (!$fld->processInput($inputPost)) {
-                        $inputProcessed = false;
-                        break 2;
+                foreach ($form->children as $tab) {
+                    if (!$tab->children) continue;
+
+                    // get ALL descendants, not just direct children
+                    foreach ($tab->getAll() as $fld) {
+                        if (!$fld instanceof Inputfield) continue;
+
+                        $name = (string)$fld->name;
+                        if ($name === '' || $name === 'submit') continue;
+
+                        if (!$fld->processInput($inputPost)) {
+                            $inputProcessed = false;
+                            break 2;
+                        }
+
+                        // Base value
+                        $values[$name] = $fld->value;
+
+                        // Preserve ML values
+                        if (!empty($fld->useLanguages)) {
+                            $langs = $this->wire('languages');
+                            if ($langs) {
+                                foreach ($langs as $lang) {
+                                    $key = "{$name}__{$lang->id}";
+                                    if ($inputPost->$key !== null) {
+                                        $values[$key] = $inputPost->$key;
+                                    }
+                                }
+                            }
+                        }
                     }
-                    $values[$key] = $fld->value;
                 }
             }
-
             if ($inputProcessed) {
 
                 $chatAI = $this->chatAI();
@@ -623,7 +664,6 @@ class ProcessChatAI extends Process
         return $data;
     }
 
-
     // Dashboard features
 
     /**
@@ -637,102 +677,101 @@ class ProcessChatAI extends Process
         string $selector,
         int $startId = 0,
         int $batchSize = 200,
-        bool $dryRun = false
+        bool $dryRun = false,
+        bool $forceRebuild = false
+
     ): array {
 
         $pages  = $this->wire('pages');
-        $rag    = $this->chatAI()->rag();
-        $cfg    = $this->chatAI()->promptService()->loadPromptSettings();
+        $chatai = $this->chatAI();
+        $rag    = $chatai->rag();
+        $cfg    = (array) $chatai->promptService()->loadPromptSettings();
 
-        if ($batchSize < 50)   $batchSize = 50;
-        if ($batchSize > 1000) $batchSize = 1000;
+        if($batchSize < 50)   $batchSize = 50;
+        if($batchSize > 1000) $batchSize = 1000;
 
         $summary = [
             'eligible_total'    => 0,
             'ineligible_total'  => 0,
+            'skipped' => 0,
             'indexed_new'       => 0,
             'indexed_replaced'  => 0,
             'deleted'           => 0,
             'errors'            => 0,
-            'dry_run'           => $dryRun,
-            'model'             => $this->chatAI()->model ?? '',
-            'start_id'          => $startId,
+            'dry_run'           => (bool) $dryRun,
+            'model'             => (string) ($this->chatAI()->model ?? ''),
+            'start_id'          => (int) $startId,
             'last_id'           => 0,
             'last_ok_id'        => 0,
             'current_id'        => 0,
         ];
 
-        foreach ($pages->find($selector) as $page) {
-
-            $summary['current_id'] = $page->id;
+        foreach($pages->find($selector) as $page) {
+            $summary['current_id'] = (int) $page->id;
 
             try {
-                $eligible = $this->chatAI()->validTemplate($page, $cfg);
-                $inDb     = $rag->shouldReindexBulk($page);
+                // Use the same definition of "indexable" as the hook / collectPageText.
+                $eligible = $rag->shouldIndexPage($page, $cfg);
 
-                if ($eligible) {
-                    $summary['eligible_total']++;
-                } else {
-                    $summary['ineligible_total']++;
+                // Optional override (same logic you have in the hook)
+                if($eligible && method_exists($this, 'isEligibleForChat') && !$this->isEligibleForChat($page)) {
+                    $eligible = false;
                 }
 
-                if (!$eligible) {
-                    if ($inDb && $page->isTrash()) {
-                        if (!$dryRun) $rag->deletePageVectors($page);
+
+                $stats = $rag->getPageVectorStats($page->id);
+                $hasVectors = $stats['chunks'] > 0;
+
+                if($eligible) $summary['eligible_total']++;
+                else $summary['ineligible_total']++;
+
+                // Ineligible: keep your existing rule (delete only if in trash and already in DB)
+                if(!$eligible) {
+                    if($hasVectors && $page->isTrash()) {
+
+                        // Delegate deletion through the shared function so behaviour stays consistent
+                        $res = $chatai->processRagForPage($page, $cfg, [
+                            'mode'   => 'bulk',
+                            'dryRun' => (bool) $dryRun
+                        ]);
+
+                        // Count deletion regardless of dry-run (intent)
                         $summary['deleted']++;
+
+                        if(!empty($res['error'])) $summary['errors']++;
                     }
+                    $summary['last_id'] = (int) $page->id;
                     continue;
                 }
 
-                // Eligible
-                if (!$inDb) {
-                    if (!$dryRun) $rag->collectPageText($page, $cfg);
-                    $summary['indexed_new']++;
-                } else {
-                    if (!$dryRun) {
-                        $rag->deletePageVectors($page);
-                        $rag->collectPageText($page, $cfg);
-                    }
-                    $summary['indexed_replaced']++;
-                }
+                $opts =  [
+                    'mode'         => 'bulk',
+                    'dryRun'       => (bool) $dryRun,
+                    'forceRebuild' => $forceRebuild
+                ];
 
-                $summary['last_ok_id'] = $page->id;
-                $summary['last_id']    = $page->id;
+                $res = $chatai->processRagForPage($page, $cfg, $opts);
+                if(!empty($res['skipped'])) $summary['skipped']++;
+                if(!empty($res['indexed_new'])) $summary['indexed_new']++;
+                if(!empty($res['indexed_replaced'])) $summary['indexed_replaced']++;
+                if(!empty($res['error'])) $summary['errors']++;
 
-            } catch (\Throwable $e) {
+                $summary['last_ok_id'] = (int) $page->id;
+                $summary['last_id']    = (int) $page->id;
+
+            } catch(\Throwable $e) {
                 $summary['errors']++;
-                $this->backfillLog([
-                    'ev'         => 'error',
-                    'id'         => $page->id,
-                    'last_ok_id' => $summary['last_ok_id'],
-                    'msg'        => $e->getMessage()
-                ]);
+                // Log each error for later inspection (ProcessWire log)
+                $this->wire('log')->save(
+                    'chatai',
+                    "Backfill error, Page id {$page->id}, last_ok_id {$summary['last_ok_id']}: " . $e->getMessage()
+                );
+                // Capture a short warning to show once at the top of the page
+                if(empty($summary['_warn'])) {
+                    $summary['_warn'] = "One or more pages failed during backfill. See Setup > Logs > chatai for details.";
+                }
             }
         }
         return $summary;
-    }
-
-    public function actionReindexAll($selector, int $langId = 0 ) : void {
-
-        $indexer = $this->chatAI()->indexer();
-        $indexer->setWire($this->wire());
-        $cfg = $this->chatAI()->promptService()->loadPromptSettings();
-
-        $pages = $this->wire('pages')->findMany($selector);
-
-        $languages = $this->wire('languages');
-        $langIds = ($languages && $languages->count())
-            ? array_map(fn($l) => (int)$l->id, iterator_to_array($languages))
-            : [ (int)$langId ];
-
-        foreach($pages as $p) {
-            foreach($langIds as $lid) $indexer->buildForPage($p, $lid);
-        }
-        $next = $indexer->bumpIndexVersion();
-
-        $cfg['index_version'] = $next;
-        $this->chatAI()->promptService()->savePromptSettings($cfg);
-        $this->_promptMemo = $cfg;
-        $this->message('Reindex complete.');
     }
 }
