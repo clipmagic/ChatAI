@@ -31,23 +31,33 @@ class DictionaryTab
 
         $fieldset = $m->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'relevance');
-        $fieldset->label($m->_('Phrase relevance vs noise'));
+        $fieldset->label($m->_('Phrase relevance'));
 
+
+        // Phrases used to reference active front end page
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name+id', 'current_page_refs');
+        $f->label($m->_('Current page reference'));
+        $f->notes($m->_("Phrases that identify the current page. Comma-separated."));
+        $value = $data['current_page_refs'] ?? "this page,current page,on this page,this article,this post,here";
+        $f->val($value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(50);
+        $fieldset->add($f);
 
         // Custom terms
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id', 'custom_terms');
         $f->label($m->_('Custom terms'));
+        $f->placeholder($m->_("pricing\nbook online\nterm|2.0"));
         $f->notes($m->_("Phrases relevant to site content.\nOne phrase per line.\nMay be weighted, eg term|2.0"));
         $value = $data['custom_terms'] ?? '';
         $f->val($value);
         $f->stripTags = true;
         $f->useLanguages = true;
-        $f->columnWidth(100);
+        $f->columnWidth(50);
         $fieldset->add($f);
-
-
-
 
         $inputfields->add($fieldset);
 
