@@ -9,6 +9,8 @@ use stdClass;
 
 class ChatAI extends WireData implements Module, ConfigurableModule
 {
+    public const CHATAI_VEC_TABLE = 'chatai_vec_chunks';
+
     const dbTableName = 'chatai';
 
     const dbTablePrompt = 'chatai_prompt';
@@ -76,60 +78,35 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         // Hooks
-        $this->addHookAfter('Pages::saved', function ($event) {
+        $this->addHookAfter('Pages::saved', function (HookEvent $event) {
+
             $page    = $event->arguments(0);
             $changes = (array) ($event->arguments(1) ?? []);
 
-            $chatai = $this->wire('modules')->get('ChatAI');
-            if (!$chatai) return;
-
-            $cfg = (array) $chatai->promptService()->loadPromptSettings();
-            if (empty($cfg['chunk_on_save'])) return;
-
-            $rag = $chatai->rag();
+            $cfg = (array) $this->promptService()->loadPromptSettings();
+            if(empty($cfg['chunk_on_save'])) return;
 
             $changedKeys    = array_keys($changes);
             $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
             $contentChanged = !empty($meaningfulKeys);
 
-            $isIndexableNow = $rag->shouldIndexPage($page);
-
-            // Optional hook override
-            if ($isIndexableNow && !$this->isEligibleForChat($page)) {
-                $isIndexableNow = false;
-            }
-
-            if (!$isIndexableNow) {
-                try {
-                    $rag->deletePageVectors($page);
-                } catch (\Throwable $e) {
-                    $this->wire('log')->save('chatai', "Page not removed from vec db, Page id {$page->id}: " . $e->getMessage());
-                }
-                return;
-            }
-
-            if (!$contentChanged) return;
-
-            try {
-                $rag->deletePageVectors($page);
-                $rag->collectPageText($page, $cfg);
-            } catch (\Throwable $e) {
-                $this->wire('log')->save('chatai', "Index upsert error, Page id {$page->id}: " . $e->getMessage());
-            }
+            $this->processRagForPage($page, $cfg, [
+                'mode'           => 'on_save',
+                'contentChanged' => $contentChanged,
+                'dryRun'         => false,
+            ]);
         });
 
         $this->addHookAfter('Pages::deleted', function($event) {
             $page = $event->arguments(0);
-            $chatai = $this->wire('modules')->get('ChatAI');
-            $rag  = $chatai->rag();
+            $rag  = $this->rag();
             try { $rag->deletePageVectors($page); }
             catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
         });
 
         $this->addHookAfter('ImportPagesCSV::execute', function(HookEvent $event) {
 
-            $chatai = $this->wire('modules')->get('ChatAI');
-            $svc = $chatai->promptService();
+            $svc = $this->promptService();
             $cfg = $svc->loadPromptSettings();
             if (!empty($cfg['chunk_on_save'])) {
                 $ips = $event->object;
@@ -138,6 +115,22 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 );
             }
         });
+
+        $this->addHookAfter('Languages::deleted', function(HookEvent $event) {
+
+            $language = $event->arguments(0); // Page
+            if(!$language || !$language->id) return;
+
+            $langId = (int) $language->id;
+
+            try {
+                $this->rag()->deleteLanguageVectors($langId); // implement this
+                $this->wire('log')->save('chatai', "Deleted vectors for removed language lang_id={$langId}");
+            } catch(\Throwable $e) {
+                $this->wire('log')->save('chatai', "Language vector delete failed lang_id={$langId}: " . $e->getMessage());
+            }
+        });
+
 
     }
 
@@ -293,6 +286,130 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $inputfields->add($fieldset);
 
         return $inputfields;
+    }
+
+    /* Hook functions */
+    public function processRagForPage(Page $page, array $cfg, array $opts = []): array {
+
+        $dryRun         = !empty($opts['dryRun']);
+        $mode           = (string) ($opts['mode'] ?? 'bulk'); // 'on_save' | 'bulk'
+        $contentChanged = ($mode === 'on_save') ? !empty($opts['contentChanged']) : true;
+        $forceRebuild   = !empty($opts['forceRebuild']); // bulk only: rebuild even if already in DB
+
+        $out = [
+            'page_id'          => (int) $page->id,
+            'eligible_now'     => false,
+            'deleted'          => false,
+            'indexed_new'      => false,
+            'indexed_replaced' => false,
+            'skipped'          => '',
+            'error'            => null,
+        ];
+
+
+        $rag = $this->rag();
+
+        // Determine indexability now
+        $isIndexableNow = $rag->shouldIndexPage($page, $cfg);
+
+        // Optional site override
+        if($isIndexableNow && method_exists($this, 'isEligibleForChat') && !$this->isEligibleForChat($page)) {
+            $isIndexableNow = false;
+        }
+
+        $out['eligible_now'] = $isIndexableNow;
+
+        // If not indexable now, remove vectors and stop
+        if(!$isIndexableNow) {
+            if(!$dryRun) {
+                try {
+                    $rag->deletePageVectors($page);
+                } catch(\Throwable $e) {
+                    $out['error'] = $e->getMessage();
+                    $this->wire('log')->save('chatai', "RAG delete error, Page id {$page->id}: " . $e->getMessage());
+                }
+            }
+            $out['deleted'] = true; // intent: should be deleted (or would be in dry run)
+            $out['skipped'] = 'not_indexable';
+            return $out;
+        }
+
+        // On-save mode: only do work if meaningful content changed
+        if($mode === 'on_save' && !$contentChanged) {
+            $out['skipped'] = 'no_content_change';
+            return $out;
+        }
+
+        if($mode === 'bulk') {
+
+            // Decide using DB facts, not policy
+            $stats = $rag->getPageVectorStats($page->id);
+
+            $hasVectors = !empty($stats['chunks']);
+
+            $indexedAtTs = 0;
+            if(!empty($stats['indexed_at'])) {
+                $indexedAtTs = strtotime($stats['indexed_at']);
+                if($indexedAtTs === false) $indexedAtTs = 0;
+            }
+
+            // Not indexed at all
+            if(!$hasVectors) {
+                if(!$dryRun) {
+                    try {
+                        $rag->collectPageText($page, $cfg);
+                    } catch(\Throwable $e) {
+                        $out['error'] = $e->getMessage();
+                        $this->wire('log')->save('chatai', "RAG index error, Page id {$page->id}: " . $e->getMessage());
+                        return $out;
+                    }
+                }
+                $out['indexed_new'] = true;
+                return $out;
+            }
+
+            // Already indexed, and unchanged since last index, and no force rebuild
+            if(!$forceRebuild && $indexedAtTs > 0 && (int)$page->modified <= $indexedAtTs) {
+                $out['skipped'] = 'unchanged';
+                return $out;
+            }
+
+            // Otherwise rebuild
+            if(!$dryRun) {
+                try {
+                    $rag->deletePageVectors($page);
+                    $rag->collectPageText($page, $cfg);
+                } catch(\Throwable $e) {
+                    $out['error'] = $e->getMessage();
+                    $this->wire('log')->save('chatai', "RAG rebuild error, Page id {$page->id}: " . $e->getMessage());
+                    return $out;
+                }
+            }
+
+            $out['indexed_replaced'] = true;
+            return $out;
+        }
+
+        // On-save mode: rebuild (delete + collect)
+        if(!$dryRun) {
+            try {
+                $rag->deletePageVectors($page);
+                $rag->collectPageText($page, $cfg);
+            } catch(\Throwable $e) {
+                $out['error'] = $e->getMessage();
+                $this->wire('log')->save('chatai', "RAG upsert error, Page id {$page->id}: " . $e->getMessage());
+                return $out;
+            }
+        }
+
+        $out['indexed_replaced'] = true;
+        return $out;
+    }
+
+    public function deleteLanguageVectors(int $langId): void {
+        $db = $this->wire('database');
+        $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE lang_id=?");
+        $stmt->execute([$langId]);
     }
 
     /* Module functions */
@@ -1413,9 +1530,10 @@ SQL;
       text MEDIUMTEXT NOT NULL,
       embedding_csv LONGTEXT NOT NULL,
       created_at DATETIME NOT NULL,
-      updated_at DATETIME NOT NULL,
+      indexed_at DATETIME NOT NULL,
       PRIMARY KEY (id),
       KEY ix_page_lang (page_id, lang_id),
+      KEY ix_page_indexed_at (page_id, indexed_at),
       FULLTEXT KEY ft_text (text)
     ) ENGINE=InnoDB
       DEFAULT CHARSET=utf8mb4;
