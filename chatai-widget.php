@@ -1,4 +1,9 @@
 <?php namespace ProcessWire;
+$ln = '';
+if (isset($languages) && $languages) {
+    // LanguageSupportPageNames implies $user->language is meaningful
+    $ln = (int) $user->language->id;
+}
 ?>
 <!-- Chatbot Toggle Button -->
 <button id="chatbot-toggle" class="chatbot-toggle" aria-label="Open chatbot">
@@ -37,7 +42,7 @@
 
     <div class="chatbot-input-wrapper">
         <form id="chatbot-form" class="chatbot-form">
-            <input type="text" id="chatbot-input" data-ln="<?=$user->language->id?>" class="chatbot-input" placeholder="<?=$placeholder?>" required aria-label="Chatbox input field">
+            <input type="text" id="chatbot-input" data-ln="<?=$ln?>" class="chatbot-input" placeholder="<?=$placeholder?>" required aria-label="Chatbox input field">
             <button type="submit" class="chatbot-submit"><?=$button_text?></button>
         </form>
 

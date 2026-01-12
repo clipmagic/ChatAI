@@ -70,11 +70,8 @@ class PromptTab
         $f = $m->get('InputfieldTextarea');
         $f->attr('name+id','blacklist');
         $f->label($m->_('Blacklisted terms'));
-
-
-
         $f->showIf('use_blacklist=1');
-        $value = $data['blacklist'] ?? $m->_("answer my exam,bomb,buy drugs,cheat,cocaine,ddos,drugs,ecstasy,erotic,exploit,fetish,generate code for me,gun,hack,heroin,how to jailbreak,kill,lsd,marijuana,masturbate,meth,murder,naked,nude,onlyfans,orgasm,penis,porn,proxy,prompt injection,rape,sex,shoot,shell,solve my homework,sql injection,stab,strip,suicide,terrorist,torrent,vagina,violence,vpn,weed,who won the war,write my essay,xxx,xss");
+        $value = $data['blacklist'] ?? $m->_("always respond,end every response,from now on,forget all previous,ignore previous instructions,your name is,call yourself,you are now,act as,system prompt, developer message, reveal the prompt,answer my exam,bomb,buy drugs,cheat,cocaine,ddos,drugs,ecstasy,erotic,exploit,fetish,generate code for me,gun,hack,heroin,how to jailbreak,kill,lsd,marijuana,masturbate,meth,murder,naked,nude,onlyfans,orgasm,penis,porn,proxy,prompt injection,rape,sex,shoot,shell,solve my homework,sql injection,stab,strip,suicide,terrorist,torrent,vagina,violence,vpn,weed,who won the war,write my essay,xxx,xss");
         $f->val($value);
         $f->notes($m->_('Add or remove terms as needed'));
         $f->stripTags = true;

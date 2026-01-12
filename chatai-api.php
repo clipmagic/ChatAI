@@ -6,9 +6,6 @@ This endpoint intentionally returns raw JSON; ProcessWire bootstrapping and
 headers are handled by index.php.
 */
 
-
-
-
 $chatai = $modules->get('ChatAI');
 $res = new stdClass();
 
@@ -56,5 +53,11 @@ if($userMessage === '') {
     return json_encode($res);
 }
 
-$res = $chatai->sendMessage($userMessage, $data->ln ?? null, $sanitizer->int($data->pid) ?? null, $data->url ?? '');
+$res = $chatai->sendMessage(
+    $userMessage,
+    $sanitizer->int($data->ln ?? null) ?: null,
+    $sanitizer->int($data->pid ?? null) ?: null,
+    $sanitizer->url($data->url ?? '')
+);
+
 return json_encode($res);

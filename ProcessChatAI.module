@@ -74,7 +74,6 @@ class ProcessChatAI extends Process
         if ($this->wire('input')->requestMethod('POST')) return;
 
         $cfg = $svc->loadPromptSettings();
-        bd($cfg);
 
         if(empty($cfg)) {
             $cfg = $this->getValues($form);

@@ -29,33 +29,26 @@ class RAG extends Wire {
 
     public function init() {
         require_once '../../classes/Indexing/IndexContentExtractor.php';
-        require_once '../../classes/Indexing/ChatAIIndexer.php';
-
-        // Shared services
-        $this->indexer = new \ProcessWire\ChatAIIndexer();
-        $this->indexer->setWire($this->wire());
-
     }
 
     /*************************
      * 1) CONFIG HELPERS     *
      *************************/
 
+    protected function chatAI(): ?ChatAI {
+        return $this->wire('modules')->get('ChatAI');
+    }
+
     /** Page must use a configured template to be indexed. */
-    public function shouldIndexPage(Page $page): bool {
-
-      //  $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $chatai = $this->wire('modules')->get('ChatAI');
-        $config = $this->wire('config');
-
-        $cfg = $chatai->promptService()->loadPromptSettings();
-
+    public function shouldIndexPage(Page $page, array $cfg): bool {
+        $chatai  = $this->ChatAI();
+        $config  = $this->wire('config');
+        if(!$chatai) return false;
         if(!$chatai->validTemplate($page, $cfg)) return false;
-        if ($page->id === $config->http404PageID) return false;
-        if (in_array($page->template->name, ['http404'], true)) return false;
-        if (in_array($page->name, ['http404'], true)) return false;
-        if (!$page->isPublic()) return false;
-
+        if($page->id === $config->http404PageID) return false;
+        if($page->template && $page->template->name === 'http404') return false;
+        if($page->name === 'http404') return false;
+        if(!$page->isPublic()) return false;
         return true;
     }
 
@@ -64,26 +57,21 @@ class RAG extends Wire {
      * - returns true if page has no vectors OR the latest vector is older than $page->modified
      * - returns false if vectors exist and are up-to-date
      */
-    public function shouldReindexBulk(Page $page): bool
-    {
-        $db    = $this->wire('database');
-        $tbl   = $db->escapeTable(self::CHATAI_VEC_TABLE);
+    public function getPageVectorStats(int $pageId): array {
+        $db = $this->wire('database');
+        $stmt = $db->prepare(
+            "SELECT COUNT(*) AS chunks, MAX(indexed_at) AS indexed_at
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE page_id=?"
+        );
+        $stmt->execute([$pageId]);
+        $row = (array) $stmt->fetch(\PDO::FETCH_ASSOC);
 
-        // Ensure we’re not reusing a stale Page instance
-        $page  = $this->wire('pages')->getFresh($page);
-
-        $stmt = $db->prepare("SELECT MAX(updated_at) AS m FROM {$tbl} WHERE page_id = ?");
-        $stmt->execute([(int) $page->id]);
-        $max  = $stmt->fetchColumn(); // null if no rows
-
-        $last = $max ? (int) strtotime((string) $max) : 0;
-        $mod  = (int) $page->modified;
-
-        // Small epsilon to defeat clock/DB jitter
-        return ($mod > $last + 1);
+        return [
+            'chunks'    => (int) ($row['chunks'] ?? 0),
+            'indexed_at'=> (string) $row['indexed_at'] ?? ''
+        ];
     }
-
-
 
     /**********************
      * 2) LOW-LEVEL TOOLS *
@@ -160,6 +148,7 @@ class RAG extends Wire {
     protected function packCsv(array $v): string {
         return implode(',', array_map(fn($x) => rtrim(rtrim(sprintf('%.6f', $x), '0'), '.'), $v));
     }
+
     protected function unpackCsv(string $csv): array { return $csv ? array_map('floatval', explode(',', $csv)) : []; }
 
     protected function cosine(array $a, array $b): float {
@@ -231,7 +220,7 @@ class RAG extends Wire {
         $now = date('Y-m-d H:i:s');
         $stmtIns = $db->prepare(
             "INSERT INTO `" . self::CHATAI_VEC_TABLE . "`
-             (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv, created_at, updated_at)
+             (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv, created_at, indexed_at)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
         );
 
@@ -269,9 +258,7 @@ class RAG extends Wire {
         if (!$this->shouldIndexPage($page, $cfg)) return;
 
         $user = $this->wire('user');
-
-        $this->indexer = new ChatAIIndexer();
-
+        $indexer = $this->chatAI()->indexer();
         $pageLangs = $page->getLanguages();
 
         if ($pageLangs->count > 0 && $page->isPublic()) {
@@ -279,12 +266,12 @@ class RAG extends Wire {
             foreach ($pageLangs as $lang) {
                 $user->setLanguage($lang);
                 $langId = (int)$lang->id;
-                $content = $this->indexer->buildForPage($page, $langId);
+                $content = $indexer->buildForPage($page, $langId);
                 $this->indexPageTextChunks($page, $langId, $content);
             }
             if ($origLang) $user->setLanguage($origLang);
         } else {
-            $content = $this->indexer->buildForPage($page, 0);
+            $content = $indexer->buildForPage($page, 0);
             $this->indexPageTextChunks($page, 0, $content);
         }
     }
@@ -292,6 +279,68 @@ class RAG extends Wire {
     /****************
      * 4) RETRIEVAL *
      ****************/
+
+    public function retrieveTopKForPage(
+        string $query,
+        int $ragLangId,
+        int $pageId,
+        int $k = 6,
+        int $prefilter = 60
+    ): array {
+
+        if ($pageId < 1) return [];
+
+        $pages = $this->wire('pages');
+        $page  = $pages->get($pageId);
+
+        if (!$page->id || !$page->viewable()) return [];
+
+        $db   = $this->wire('database');
+        $qVec = $this->embedText($query);
+
+        try {
+            $stmt = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=? AND page_id=?
+               AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+             LIMIT ?"
+            );
+            $stmt->execute([$ragLangId, $pageId, $query, $prefilter]);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            $rows = [];
+        }
+
+        if (!$rows) {
+            $stmt2 = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=? AND page_id=?
+             LIMIT 200"
+            );
+            $stmt2->execute([$ragLangId, $pageId]);
+            $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        }
+
+        // Score chunks (no page collapse)
+        $scored = [];
+        foreach ($rows as $r) {
+            if (empty($r['source_url'])) continue;
+            $vec = $this->unpackCsv($r['embedding_csv']);
+            $r['score'] = $this->cosine($qVec, $vec);
+            $scored[] = $r;
+        }
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return array_slice($scored, 0, $k);
+    }
+
+
+
+
+
 
     public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
         $db = $this->wire('database');
@@ -353,7 +402,6 @@ class RAG extends Wire {
         return array_slice($uniq, 0, $k);
     }
 
-
     /** Build a compact context string from chunks (bounded by $maxChars). */
     public function buildContextFromChunks(array $chunks, int $maxChars = 2400): string {
         $buf = '';
@@ -391,6 +439,5 @@ class RAG extends Wire {
 
         return $langs;
     }
-
 }
 

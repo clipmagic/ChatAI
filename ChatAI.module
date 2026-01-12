@@ -768,7 +768,90 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function sendMessage(string $userMessage, $langId = null, int $pid = null, string $url = null, $meta = []): \stdClass
+    protected function isCurrentPageRef(string $msg, ?int $langId, array $cfg): bool
+    {
+        $key = $langId ? "current_page_refs__{$langId}" : "current_page_refs";
+        $list = (string)($cfg[$key] ?? $cfg['current_page_refs'] ?? '');
+        if ($list === '') return false;
+
+        $msg = mb_strtolower(trim($msg));
+
+        foreach (explode(',', $list) as $ref) {
+            $ref = mb_strtolower(trim($ref));
+            if ($ref === '') continue;
+            if (mb_strpos($msg, $ref) !== false) return true;
+        }
+        return false;
+    }
+
+    protected function handleUrlsInPayload(array &$payload): array
+    {
+        $config = $this->wire('config');
+        $pages  = $this->wire('pages');
+
+        $msg = (string) ($payload['msg'] ?? '');
+        $pid = (int) ($payload['pageId'] ?? 0);
+
+        // Allowed hosts (PW convention)
+        $httpHosts = is_array($config->httpHosts)
+            ? $config->httpHosts
+            : [$config->httpHost];
+
+        $allowedHosts = array_values(array_filter(array_map(function ($h) {
+            $h = strtolower(trim((string) $h));
+            return $h !== '' ? $h : null;
+        }, $httpHosts)));
+
+        // Extract URLs
+        if (!preg_match_all('~https?://[^\s<>"\'\)\]]+~i', $msg, $m)) {
+            return ['blocked' => false, 'has_url' => false];
+        }
+
+        $urls = $m[0] ?? [];
+        if (!$urls) return ['blocked' => false, 'has_url' => false];
+
+        $firstOnSiteUrl = null;
+
+        foreach ($urls as $u) {
+            $host = strtolower((string) parse_url($u, PHP_URL_HOST));
+            if ($host !== '' && in_array($host, $allowedHosts, true)) {
+                $firstOnSiteUrl = $u;
+                break; // accept first on-site URL
+            }
+        }
+
+        if (!$firstOnSiteUrl) {
+            // URLs were present, none were on-site
+            return [
+                'blocked' => true,
+                'has_url' => true,
+                'reason'  => 'no_onsite_url',
+            ];
+        }
+
+        // We have at least one on-site URL; optionally resolve to pageId
+        if ($pid < 1) {
+            $p = $pages->get($firstOnSiteUrl);
+            if ($p && $p->id && $p->viewable()) {
+                $payload['pageId'] = (int) $p->id;
+            }
+        }
+
+        return [
+            'blocked' => false,
+            'has_url' => true,
+            'onsite_url' => $firstOnSiteUrl,
+        ];
+    }
+
+
+    public function sendMessage(
+        string $userMessage,
+        ?int $langId = null,
+        ?int $pid = null,
+        ?string $url = null,
+        array $meta = []
+    ): \stdClass
     {
         $san = $this->wire('sanitizer');
         $user = $this->wire('user');
@@ -782,10 +865,31 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'name'        => null,
         ];
 
+
+        // Validate / normalise (defensive)
+        $msg = $san->text($userMessage);
+        $langId = $langId !== null ? (int) $san->int($langId) : null;
+        if ($langId < 1) $langId = null;
+        $pid = $pid !== null ? (int) $san->int($pid) : 0;
+        if ($pid < 1) $pid = 0;
+        $url = $url !== null ? (string) $san->url($url) : '';
+
+
+        // Context for CTA hook
+        $payload = [
+            'status'       => 'ok',
+            'openai_error' => null,
+            'msg'          => $msg,
+            'reply'        => '',
+            'error'        => null,
+            'pageId'       => $pid,
+            'langId'       => $langId,
+            'url'          => $url,
+        ];
+
         // Language switch (soft)
         if ($langId !== null) {
             try {
-                $langId = (int)$san->int($langId);
                 $languages = $this->wire('languages');
                 if ($languages && $langId) {
                     $lang = $languages->get($langId);
@@ -793,24 +897,21 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 }
             } catch (\Throwable $e) { /* ignore */ }
         }
+
         $result->name = $this->promptService()->getBotName();
-
-        // Validate
-        $msg = $san->text($userMessage);
-
-        // Context for CTA hook
-        $payload = [
-            'status'    => 'ok',
-            'openai_error'  => null,
-            'msg'  => $msg,
-            'reply' => '',
-            'error'     => null,
-            'pageId'    => $pid,
-            'url'       => $url,
-        ];
-
-
         $result = $this->isMessageAllowed($msg);
+        $urlCheck = $this->handleUrlsInPayload($payload);
+        if (!empty($urlCheck['blocked'])) {
+            $result->error = $this->getErrorMessage(16);
+            $payload['status']    = 'blocked';
+            $payload['replyText'] = $result->error->msg;
+
+            if ($cta = $this->afterResponse($payload)) {
+                $result->cta = $cta;
+            }
+            return $result;
+        }
+
         if($result && $result->error) {
             // Optional CTA
             $payload['status'] = 'not_allowed';
@@ -860,7 +961,25 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         // RAG path
-        $top = $this->rag->retrieveTopK($msg, $userLangId, 6);
+        $ragLangId = $langId ?? 0;
+        $k = 6;
+
+
+        // phrase trigger
+        $isCurrentRef = $this->isCurrentPageRef($msg, $langId, $cfg);
+
+        // vague trigger (uses your existing intent label)
+        $preferPageForVague = ($pid > 0 && in_array($label, ['meta', 'ambiguous'], true));
+
+        if ($isCurrentRef || $preferPageForVague) {
+            $top = $this->rag->retrieveTopKForPage($msg, $ragLangId, $pid, $k);
+        } else {
+            $top = $this->rag->retrieveTopK($msg, $ragLangId, $k);
+        }
+
+
+
+
         if(!empty($top)) {
             $context = $this->rag->buildContextFromChunks($top);
         } else {
@@ -1238,6 +1357,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
             case 15: // rate limited / busy (translatable)
                 $errorMsg->msg = $this->_('We are a bit busy. Please try again shortly.');
+                $errorMsg->warning = true;
+                break;
+
+            case 16: // invalid URL(s) in message
+                $errorMsg->msg = $this->_('I can only help with pages and information on this site. Please use a link from this site, or remove external links and try again.');
                 $errorMsg->warning = true;
                 break;
 

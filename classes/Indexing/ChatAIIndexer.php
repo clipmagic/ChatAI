@@ -35,11 +35,9 @@ class ChatAIIndexer extends Wire
         return $content;
     }
 
-
     /* ------------------------------ helpers ------------------------------ */
 
-
-    /** Return current index_version from ProcessChatAI prompt settings (defaults to 1) */
+    /** Return current index_version from prompt settings (defaults to 1) */
     public function getIndexVersion(): int
     {
         // @var \ProcessWire\ProcessChatAI $proc

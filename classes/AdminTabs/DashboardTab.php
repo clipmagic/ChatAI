@@ -177,7 +177,16 @@ class DashboardTab
         $dry->name = 'rag_dry_run';
         $dry->label = $m->_('Dry run (report only, no changes)');
         $dry->checked = true;
+        $dry->columnWidth(50);
         $bf->add($dry);
+
+        // Force rebuild
+        $force = $m->get('InputfieldCheckbox');
+        $force->name = 'rag_force_rebuild';
+        $force->label = $m->_('Force all pages to be reindexed');
+        $force->checked = false;
+        $force->columnWidth(50);
+        $bf->add($force);
 
         // Submit
         $btn = $m->get('InputfieldSubmit');
@@ -188,6 +197,55 @@ class DashboardTab
 
         $inputfields->add($bf);
 
+        // --- RAG: Remove vectors ---
+        $bf = $m->get('InputfieldFieldset');
+        $bf->attr('name+id', 'fs_rag_remove');
+        $bf->label = $m->_('Bulk remove vectors');
+        $bf->description = $m->_(
+            'text warning to go here.'
+        );
+        $bf->collapsed  = \ProcessWire\Inputfield::collapsedYes;;
+
+        // Selector
+        $selector = $m->get('InputfieldText');
+        $selector->name = 'rag_remove_selector';
+        $selector->label = $m->_('Page selector');
+        $selector->notes = $m->_(
+            'ProcessWire selector used to find pages to exclude from chat responses'
+        );
+        $bf->add($selector);
+
+        // Dry run
+        $dry = $m->get('InputfieldCheckbox');
+        $dry->name = 'rag_remove_dry_run';
+        $dry->label = $m->_('Dry run (report only, no changes)');
+        $dry->checked = true;
+        $dry->notes = $m->_('Matches pages to remove from chatai_vector_chunks.');
+        $dry->columnWidth(50);
+        $bf->add($dry);
+
+        // Batch size
+        $batch = $m->get('InputfieldInteger');
+        $batch->name = 'max_pages';
+        $batch->label = $m->_('Maximum pages (1000)');
+        $batch->value = 200;
+        $batch->attr('type', 'number');
+        $batch->min = 50;
+        $batch->max = 1000;
+        $batch->columnWidth(50);
+        $bf->add($batch);
+
+
+        // Submit
+        $btn = $m->get('InputfieldSubmit');
+        $btn->name = 'rag_run_remove';
+        $btn->value = $m->_('Run bulk removal');
+        $btn->attr('class', 'ui-button ui-priority-primary');
+        $btn->description = $m->_(
+            "- Does not delete pages.\n- Only removes chatbot vector content.\n- Use Dry run first.\n*Recommendation*: take a full ProcessWire database backup before deleting.");
+        $bf->add($btn);
+
+        $inputfields->add($bf);
 
         $form->add($inputfields);
 
