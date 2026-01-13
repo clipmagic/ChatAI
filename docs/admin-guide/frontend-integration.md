@@ -4,6 +4,8 @@ ChatAI ships with a default frontend widget (PHP), JavaScript, and CSS.
 
 This chapter explains how the widget is structured, which parts can be customised safely, and which attributes must remain stable because they are used by the JavaScript.
 
+**The Anatomy of a Chatbot** provides a concise overview of how chatbot components interact and how site content is supplied to a model.
+
 ---
 
 ### 7.1 Recommended Approach for Customising Frontend Assets

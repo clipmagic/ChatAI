@@ -1,6 +1,12 @@
 ## 6. ChatAI Behaviour Configuration
 
-(ProcessChatAI – Setup / Settings → ChatAI)
+*(ProcessChatAI – Setup / Settings → ChatAI)*
+
+This section describes how ChatAI behaviour is configured through the ProcessChatAI interface.
+
+It covers monitoring, indexing, presentation, prompt construction, and input interpretation. These settings control *how ChatAI operates*, not what it is technically allowed to do at a system level.
+
+---
 
 ### 6.1 Dashboard
 
@@ -12,7 +18,7 @@ It is intended for monitoring and operational insight rather than configuration.
 
 #### Update ChatAI on Save
 
-This setting controls whether eligible site content is processed automatically when pages are saved.
+Controls whether eligible site content is processed automatically when pages are saved.
 
 - When enabled, relevant content is updated during normal page save operations.
 - When disabled, content updates are deferred until a manual re-index is run.
@@ -23,7 +29,7 @@ Disabling this option is recommended when performing bulk page updates or import
 
 #### Analytics and KPIs
 
-This section defines thresholds used to flag potential issues on the dashboard.
+Defines thresholds used to flag potential issues on the dashboard.
 
 These values do not affect chatbot behaviour directly. They are used only to highlight conditions that may require attention.
 
@@ -39,7 +45,7 @@ A lower success rate may indicate configuration issues, frequent blocking, cutof
 
 ##### Average Latency Warning (ms)
 
-Defines the response time above which the dashboard warns that interactions may feel slow.
+Defines the response time above which interactions may feel slow.
 
 This helps identify performance degradation before it becomes user-visible.
 
@@ -55,7 +61,7 @@ Sustained values above this threshold may warrant investigation of model selecti
 
 #### Chat Activity
 
-This section summarises recent chatbot usage for the selected time period.
+Summarises recent chatbot usage for the selected time period.
 
 Metrics typically include:
 
@@ -63,8 +69,6 @@ Metrics typically include:
 - total messages,
 - errors and cutoffs,
 - blocked or rate-limited interactions.
-
-These metrics provide a high-level view of usage patterns and system health.
 
 ---
 
@@ -78,17 +82,17 @@ These views help identify unusual patterns or changes in behaviour.
 
 #### Insights
 
-The Insights panel highlights notable conditions based on current metrics and configured thresholds.
+Highlights notable conditions based on current metrics and configured thresholds.
 
 Insights are informational only and do not alter system behaviour.
 
 ---
 
-#### Update Vector Database
+#### Update Vector Database (RAG)
 
-This section provides tools for maintaining and reconciling indexed site content.
+Provides tools for maintaining and reconciling indexed site content.
 
-What content is eligible for indexing is defined in the **Prompt** tab under *Content Guidance*. This includes which templates, fields, and pages are considered when building the vector database.
+What content is eligible for indexing is defined in the **Prompt** tab under *Content Guidance*.
 
 ---
 
@@ -97,11 +101,12 @@ What content is eligible for indexing is defined in the **Prompt** tab under *Co
 Defines the page ID from which re-indexing should begin.
 
 This allows administrators to:
+
 - resume a previous re-index operation,
 - process content in controlled ranges,
 - or limit re-indexing to newer content.
 
-When set, only pages with an ID greater than the specified value are processed.
+Only pages with an ID greater than this value are processed.
 
 ---
 
@@ -112,15 +117,32 @@ Controls how many pages are processed per batch during re-indexing.
 Smaller batches reduce system load and risk of timeouts.  
 Larger batches complete faster but may increase load on larger sites.
 
-Batching allows re-indexing to be performed safely on sites with large numbers of pages.
-
 ---
 
 ##### Dry Run
 
 When enabled, the re-index process runs in report-only mode.
 
-No changes are made to stored vectors, allowing administrators to preview the scope and impact of a re-index operation safely.
+No changes are made to stored vectors, allowing administrators to safely preview scope and impact.
+
+---
+
+##### Force All Pages to Be Reindexed
+
+Forces ChatAI to rebuild vector entries for **all eligible pages**, even if they appear unchanged.
+
+When enabled:
+
+- existing vector entries are discarded,
+- all eligible pages are reprocessed from scratch.
+
+This is useful when:
+
+- indexing or extraction logic has changed,
+- rendering behaviour was adjusted,
+- or a clean rebuild is required.
+
+Because this operation can be resource-intensive, it should be used deliberately.
 
 ---
 
@@ -128,7 +150,7 @@ No changes are made to stored vectors, allowing administrators to preview the sc
 
 A typical default selector looks like:
 
-`has_parent!=2, include=all, template!=admin, id!=27, template!=http404, sort=id, limit=50`
+`has_parent!=2, include=all, template!=admin, id!=27, template!=http404, sort=id, limit=200`
 
 This default is automatically adjusted based on:
 - site configuration,
@@ -141,17 +163,76 @@ Developers can override the selector via a hook if site-specific indexing rules 
 
 ##### Run Re-Index and Reconcile
 
-Scans eligible site pages, updates missing or outdated entries, and removes entries that no longer qualify.
+Scans eligible pages, updates missing or outdated entries, and removes entries that no longer qualify.
 
-This action is typically used after:
-- bulk content changes,
-- updates to content eligibility rules,
-- or periods where automatic updates were disabled.
-
-Progress feedback includes the last page ID processed, allowing re-indexing to be resumed if needed.
+Progress feedback includes the **last page ID processed**, allowing interrupted runs to be resumed.
 
 ---
 
+#### Bulk Remove Vectors
+
+Provides tools to **remove vector entries only** from the database.
+
+This section is **collapsed by default** to reduce the risk of accidental use.
+
+---
+
+##### Purpose
+
+Bulk removal is intended for corrective maintenance, such as:
+
+- excluding content that should no longer influence chatbot responses,
+- cleaning up vectors for deprecated templates or sections,
+- or resetting part of the RAG index.
+
+This operation **does not delete pages**.
+
+---
+
+##### Page Selector
+
+A ProcessWire selector used to identify pages whose vectors should be removed.
+
+Only vector entries associated with matching pages are affected.
+
+---
+
+##### Maximum Pages
+
+Limits how many matching pages are processed in a single run.
+
+This helps prevent long-running operations on large result sets.
+
+---
+
+##### Dry Run
+
+When enabled:
+
+- matching pages are reported,
+- no vectors are deleted.
+
+Always use Dry Run first.
+
+---
+
+##### Maximum Pages
+
+Limits how many matching pages are processed in a single run.
+
+This helps prevent long-running operations on large result sets.
+
+---
+##### Run Bulk Removal
+
+Removes matching entries from `chatai_vector_chunks`.
+
+- Pages themselves are untouched.
+- Only chatbot vector data is removed.
+
+**Recommendation:** take a full ProcessWire database backup before running this operation.
+
+---
 ### 6.2 Personalise
 
 The Personalise tab controls the chatbot’s visible identity, tone, and user-facing interface text.
@@ -463,18 +544,33 @@ Presentation and tone are configured in the **Personalise** tab, while operation
 
 The Dictionary tab allows you to influence how ChatAI interprets user input before it is processed further.
 
-Unlike the Prompt tab, which defines *what the chatbot should do*, the Dictionary focuses on *how incoming messages are interpreted, classified, and filtered*.
-
-The Dictionary does not generate answers.  
-It shapes intent recognition, relevance, and response handling.
+Unlike the Prompt tab, which defines what the chatbot should do, the Dictionary focuses on *how incoming messages are interpreted, classified, and filtered*.
 
 ---
 
 #### Phrase Relevance vs Noise
 
-This section helps ChatAI distinguish between meaningful phrases and background noise in user input.
+Helps ChatAI distinguish between meaningful phrases and background noise.
 
-It is particularly useful for improving relevance on content-heavy sites or where users ask short or loosely phrased questions.
+---
+
+#### Current Page Reference
+
+llows ChatAI to treat the current page context as a relevance signal.
+
+Useful for queries such as:
+
+- “What is this page about?”
+- “Tell me more about this”
+- “Can you explain this?”
+
+This setting:
+
+- improves relevance for vague or contextual questions,
+- does not force answers to come from the current page,
+- does not override prompt or safety rules.
+
+It acts as a relevance hint only.
 
 ---
 

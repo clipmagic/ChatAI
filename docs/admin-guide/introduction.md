@@ -2,6 +2,8 @@
 
 ## 1. Introduction
 
+This guide focuses on configuration and behaviour. A conceptual overview of how chatbot components fit together is covered separately in **The Anatomy of a Chatbot**.
+
 ### What ChatAI Is
 
 ChatAI is a **self-hosted AI assistant module for ProcessWire**.
@@ -21,7 +23,6 @@ At its core, ChatAI combines:
 - the ability to use relevant site content when answering questions
 - built-in controls to manage usage and API costs
 - extensibility via hooks for custom behaviour
-
 
 The emphasis is on **predictable behaviour, safe defaults, and transparency**, rather than automation magic.
 
