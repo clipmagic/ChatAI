@@ -48,7 +48,10 @@ class RAG extends Wire {
         if($page->id === $config->http404PageID) return false;
         if($page->template && $page->template->name === 'http404') return false;
         if($page->name === 'http404') return false;
-        if(!$page->isPublic()) return false;
+        // Must be published (hidden is allowed)
+        if($page->isUnpublished()) return false;
+        if($page->isTrash()) return false;
+
         return true;
     }
 
@@ -217,38 +220,36 @@ class RAG extends Wire {
         $chunks = $this->chunkTextByChars($text);
         if (!$chunks) return;
 
-        $now = date('Y-m-d H:i:s');
         $stmtIns = $db->prepare(
             "INSERT INTO `" . self::CHATAI_VEC_TABLE . "`
-             (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv, created_at, indexed_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+     (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv)
+     VALUES (?,?,?,?,?,?,?,?,?,?)"
         );
 
         $url = $page->httpUrl(true);
-        $title = (string)$page->title;
-        $headings = \json_encode($content['heads']);
-
+        $title = (string) $page->title;
+        $headings = json_encode($content['heads']);
         $slug = $page->name;
-        $idx = 0;
 
+        $idx = 0;
         foreach ($chunks as $c) {
             $vec = $this->embedText($c);
             $csv = $this->packCsv($vec);
+
             $stmtIns->execute([
                 null,
                 $page->id,
                 $langId,
-                (int)$idx++,
+                (int) $idx++,
                 $url,
                 $title,
                 $headings,
                 $slug,
                 $c,
                 $csv,
-                $now,
-                $now
             ]);
         }
+
     }
 
     /**
@@ -285,15 +286,17 @@ class RAG extends Wire {
         int $ragLangId,
         int $pageId,
         int $k = 6,
-        int $prefilter = 60
+        int $prefilter = 60,
+        ?User $user = null
     ): array {
+
 
         if ($pageId < 1) return [];
 
         $pages = $this->wire('pages');
         $page  = $pages->get($pageId);
 
-        if (!$page->id || !$page->viewable()) return [];
+        if (!$page->id || !$page->viewable($user)) return [];
 
         $db   = $this->wire('database');
         $qVec = $this->embedText($query);
@@ -338,20 +341,25 @@ class RAG extends Wire {
     }
 
 
+    public function retrieveTopK(
+        string $query,
+        int $userLangId,
+        int $k = 6,
+        int $prefilter = 60,
+        ?User $user = null
+    ): array {
 
+        $user = $user ?: $this->wire('user');
 
-
-
-    public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
-        $db = $this->wire('database');
+        $db   = $this->wire('database');
         $qVec = $this->embedText($query);
 
         try {
             $stmt = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-             FROM `" . self::CHATAI_VEC_TABLE . "`
-             WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
-             LIMIT ?"
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+         LIMIT ?"
             );
             $stmt->execute([$userLangId, $query, $prefilter]);
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
@@ -359,12 +367,12 @@ class RAG extends Wire {
             $rows = [];
         }
 
-        if (!$rows) {
+        if(!$rows) {
             $stmt2 = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-             FROM `" . self::CHATAI_VEC_TABLE . "`
-             WHERE lang_id=?
-             LIMIT 200"
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE lang_id=?
+         LIMIT 200"
             );
             $stmt2->execute([$userLangId]);
             $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
@@ -372,33 +380,67 @@ class RAG extends Wire {
 
         // Score all candidate chunks
         $scored = [];
-        foreach ($rows as $r) {
+        foreach($rows as $r) {
+            if(empty($r['source_url'])) continue;
+            if(empty($r['embedding_csv'])) continue;
+
             $vec = $this->unpackCsv($r['embedding_csv']);
             $r['score'] = $this->cosine($qVec, $vec);
             $scored[] = $r;
         }
-        usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
 
-        // --- NEW: collapse to unique pages (keep best chunk per page) ---
+        if(!$scored) return [];
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        // NEW: permission filter by page->viewable($user)
+        $pageIds = [];
+        foreach($scored as $row) {
+            $pid = (int) ($row['page_id'] ?? 0);
+            if($pid > 0) $pageIds[$pid] = $pid;
+            if(count($pageIds) >= ($k * 10)) break; // guard: we only need to check a sensible set
+        }
+
+        if($pageIds) {
+            $pages = $this->wire('pages');
+
+            // Bulk-load candidates in one query
+            $selector = "id=" . implode('|', $pageIds) . ", include=hidden";
+            $cand = $pages->find($selector);
+
+            $allowed = [];
+            foreach($cand as $p) {
+                if($p->id && $p->viewable($user)) $allowed[(int)$p->id] = true;
+            }
+
+            // Filter scored rows to allowed page IDs
+            if($allowed) {
+                $scored = array_values(array_filter($scored, function($row) use ($allowed) {
+                    $pid = (int) ($row['page_id'] ?? 0);
+                    return $pid > 0 && isset($allowed[$pid]);
+                }));
+            } else {
+                $scored = [];
+            }
+        }
+
+        if(!$scored) return [];
+
+        // Collapse to unique pages (keep best chunk per page)
         $byPage = [];
-        foreach ($scored as $row) {
-            $pid = (int)$row['page_id'];
-            // skip unusable entries
-            if (empty($row['source_url'])) continue;
-            if (!isset($byPage[$pid]) || $row['score'] > $byPage[$pid]['score']) {
-                // Optional: trim snippet to the first clean sentence
-                //$row['snippet'] = $this->firstSentence($row['text'] ?? '');
+        foreach($scored as $row) {
+            $pid = (int) $row['page_id'];
+            if(!isset($byPage[$pid]) || $row['score'] > $byPage[$pid]['score']) {
                 $byPage[$pid] = $row;
             }
-            if (count($byPage) >= ($k * 2)) {
-                // small guard so we don’t store too many before the final slice
-                // (keeps memory modest if $prefilter is large)
+            if(count($byPage) >= ($k * 2)) {
+                // guard (optional)
             }
         }
 
         // Sort the representative chunks by score and take top K pages
         $uniq = array_values($byPage);
-        usort($uniq, fn($a,$b) => $b['score'] <=> $a['score']);
+        usort($uniq, fn($a, $b) => $b['score'] <=> $a['score']);
         return array_slice($uniq, 0, $k);
     }
 

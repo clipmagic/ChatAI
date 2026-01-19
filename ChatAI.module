@@ -161,8 +161,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'gpt-5-mini' => 'gpt-5-mini (default)',
             'gpt-5-nano' => 'gpt-5-nano',
             'gpt-5.2'    => 'gpt-5.2',
-            'gpt-5'      => 'gpt-5',
             'gpt-5.1'    => 'gpt-5.1',
+            'gpt-5'      => 'gpt-5',
         ]);
         $f->value = $data['model'] ?? 'gpt-5-mini';
         $fieldset->add($f);
@@ -630,6 +630,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     }
 
     public function callModelForText(array $messagesForApi): \stdClass {
+
         $o = (object)['ok' => false];
 
         $postData = $this->buildPostData($this->model, $messagesForApi);
@@ -665,6 +666,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             if ($isResponses) {
                 $status = $data['status'] ?? null;
                 $reason = $data['incomplete_details']['reason'] ?? null;
+                $input_tokens = $data['usage']['input_tokens'] ?? 0;
+                $output_tokens = $data['usage']['output_tokens'] ?? 0;
 
                 if ($status === 'incomplete' && $reason === 'max_output_tokens') {
                     $partial = '';
@@ -695,6 +698,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     $o->ok     = true;
                     $o->text   = $partial;
                     $o->cutoff = true; // flag up to sendMessage()
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
                     return $o;
                 }
             }
@@ -722,6 +727,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                             if (is_string($text)) {
                                 $o->ok   = true;
                                 $o->text = $text;
+                                $o->input_tokens = $input_tokens;
+                                $o->output_tokens = $output_tokens;
                                 return $o;
                             }
                         }
@@ -732,6 +739,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 if (!empty($data['choices'][0]['message']['content'])) {
                     $o->ok   = true;
                     $o->text = (string)$data['choices'][0]['message']['content'];
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
                     return $o;
                 }
 
@@ -740,6 +749,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 if (!empty($data['choices'][0]['message']['content'])) {
                     $o->ok   = true;
                     $o->text = (string)$data['choices'][0]['message']['content'];
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
                     return $o;
                 }
             }
@@ -753,6 +764,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $this->wire('log')->save('chatai', 'OpenAI error: ' . $code . ' | ' . ($data['error']['message'] ?? ''));
                 $o->error      = $code;
                 $o->chat_error = $data['error'];
+                $o->input_tokens = $input_tokens;
+                $o->output_tokens = $output_tokens;
+
                 return $o;
             }
 
@@ -880,7 +894,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'status'       => 'ok',
             'openai_error' => null,
             'msg'          => $msg,
-            'reply'        => '',
+            'reply'        => null,
             'error'        => null,
             'pageId'       => $pid,
             'langId'       => $langId,
@@ -904,11 +918,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         if (!empty($urlCheck['blocked'])) {
             $result->error = $this->getErrorMessage(16);
             $payload['status']    = 'blocked';
-            $payload['replyText'] = $result->error->msg;
-
-            if ($cta = $this->afterResponse($payload)) {
-                $result->cta = $cta;
-            }
+            $payload['reply'] = $result->error->msg;
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
 
@@ -916,10 +927,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // Optional CTA
             $payload['status'] = 'not_allowed';
             $payload['error'] = $result->error;
-            $ctaHtml = $this->afterResponse($payload);
-            if ($ctaHtml) {
-                $result->cta = $ctaHtml;
-            }
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
 
@@ -952,13 +960,24 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $result->reply = $cfgLang('smalltalk_reply') ?: 'Hello. How can I help you today?';
             // Optional CTA
             $payload['status'] = $label;
-            $payload['replyText'] = $result->reply;
-            $ctaHtml = $this->afterResponse($payload);
-            if ($ctaHtml) {
-                $result->cta = $ctaHtml;
-            }
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
+
+        // Quick out if blocked action
+        if($label === 'blocked_action') {
+            $result->reply = $cfgLang('blocked_action_verbs_reply')
+                ?: "I’m sorry. I can’t do that. Please ask me something else about this site.";
+
+            // Optional CTA
+            $payload['status'] = $label;
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
+
+            return $result;
+        }
+
 
         // RAG path
         $ragLangId = $langId ?? 0;
@@ -972,13 +991,21 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $preferPageForVague = ($pid > 0 && in_array($label, ['meta', 'ambiguous'], true));
 
         if ($isCurrentRef || $preferPageForVague) {
-            $top = $this->rag->retrieveTopKForPage($msg, $ragLangId, $pid, $k);
+            // Only treat as no_access when the user explicitly refers to "this/current page"
+            if ($isCurrentRef && $pid > 0) {
+                $p = $this->wire('pages')->get((int) $pid);
+                if ($p && $p->id && !$this->rag->shouldIndexPage($p, $cfg)) {
+                    $label = 'no_access';
+                    $top = []; // force canned reply
+                }
+            }
+
+            if (!isset($top)) {
+                $top = $this->rag->retrieveTopKForPage($msg, $ragLangId, $pid, $k, 60, $user);
+            }
         } else {
-            $top = $this->rag->retrieveTopK($msg, $ragLangId, $k);
+            $top = $this->rag->retrieveTopK($msg, $ragLangId, $k, 60, $user);
         }
-
-
-
 
         if(!empty($top)) {
             $context = $this->rag->buildContextFromChunks($top);
@@ -987,10 +1014,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 case 'meta':
                     $result->reply = $cfgLang('meta_reply') ?: $cfgLang('no_context_reply')
                         ?: 'I can help with pages and information on this site. Ask me what you’re looking for.';
-                    break;
-
-                case 'action':
-                    $result->reply = $cfgLang('action_reply') ?: "Sure. Tell me what you'd like me to do with the site content.";
                     break;
 
                 case 'ambiguous':
@@ -1002,14 +1025,16 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                             ?: 'Tell me what you’re looking for and I’ll point you to the right page.';
                     }
                     break;
+
+                case 'no_access':
+                    $result->reply = $cfgLang('no_access_reply') ?: "I’m sorry, I don’t have access to the page. Please ask me something else about this site.";
+                    break;
+
             }
             // Optional CTA
             $payload['status'] = $label;
             $payload['replyText'] = $result->reply;
-            $ctaHtml = $this->afterResponse($payload);
-            if ($ctaHtml) {
-                $result->cta = $ctaHtml;
-            }
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
 
@@ -1033,30 +1058,18 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // Optional CTA
             $payload['status'] = 'blocked';
             $payload['error'] = $result->error;
-            $payload['replyText'] = $result->reply;
-            $ctaHtml = $this->afterResponse($payload);
-            if ($ctaHtml) {
-                $result->cta = $ctaHtml;
-            }
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
 
         // Model call
         try {
-           $started = microtime(true);
-            // After the API call
+            $started = microtime(true);
+
             $messages = $this->beforeSend($messages);
             $m = $this->callModelForText($messages);
-            // Normalize to object
-            if (is_string($m)) {
-                $decoded = json_decode($m, false);          // decode as object
-                $m = $decoded ?? (object)[];
-            } elseif (is_array($m)) {
-                $m = (object) $m;
-            } elseif (!is_object($m)) {
-                $m = (object) $m;
-            }
-
+            $m = $this->normaliseResponse($m);
             $m = $this->afterSend($m);
 
             // If the low-level wrapper flagged a cutoff, record it on the result
@@ -1081,69 +1094,40 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'model'            => (string) $this->model,
                 'endpoint'         => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
                 'cutoff'           => !empty($result->cutoff),
+                'input_tokens'      => (int) ($m->input_tokens ?? 0),
+                'output_tokens'     => (int) ($m->output_tokens ?? 0),
                 'user_msg_preview' => $ph['preview'],
                 'user_msg_hash'    => $ph['hash'],
-
             ];
 
-            if (!$m->ok) {
-                $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
-                $this->obsLog($m, $meta);
-
-                // Optional CTA (no return yet)
-                $payload['status'] = 'failed';
-                $payload['error'] = $meta['err_code'];
-                $payload['replyText'] = $result->reply;
-
+            // Add ok-dependent meta and log once
+            if (empty($m->ok)) {
+                $meta['err_code'] = !empty($m->error) ? (string) $m->error : 'unknown';
             } else {
-                // Limit check
-                $meta['stop']       = (bool)$result->stop;
-                $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-                $this->obsLog($m, $meta);
+                $meta['stop'] = (bool) $result->stop;
+
+                $answerSource = $result->html ?? $result->reply ?? $m->text ?? '';
+                $meta['answer_len'] = strlen((string) strip_tags((string) $answerSource));
             }
+
+            $this->obsLog($m, $meta);
+
         } catch (\Throwable $e) {
+            // Keep this: it is genuinely useful
             $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
-            $m = (object)['ok' => false, 'error' => 'exception'];
+
+            $m = (object) ['ok' => false, 'error' => 'exception'];
 
             // Ensure meta exists so later code does not see an undefined variable
-            if (!isset($meta)) {
+            if (!isset($meta) || !is_array($meta)) {
                 $meta = [];
             }
+            $meta['err_code'] = 'exception';
         }
 
-        // Interpret
-        if (!$m->ok) {
-            $code = !empty($m->error) ? (string)$m->error : 'unknown';
-
-            // Normalize provider “too busy / quota / throttled” signals to case 15
-            if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
-                $result->error = $this->getErrorMessage(15); // object with msg + warning
-                $result->stop  = false;
-
-                // Optional CTA
-                $payload['status'] = $code;
-                $payload['replyText'] = $result->reply;
-                $payload['error'] = $result->error;
-                $ctaHtml = $this->afterResponse($payload);
-                if ($ctaHtml) {
-                    $result->cta = $ctaHtml;
-                }
-                return $result;
-            }
-
-            // Everything else → generic failure (case 6)
-            $result->error = $this->getErrorMessage(6);     // object with msg + warning
-            $result->stop  = true;                          // or false, if you want retries
-
-            // Optional CTA
-            $payload['status'] = 'failed';
-            $payload['replyText'] = $result->reply;
-            $payload['error'] = $result->error;
-            $ctaHtml = $this->afterResponse($payload);
-            if ($ctaHtml) {
-                $result->cta = $ctaHtml;
-            }
-            return $result;
+        // Interpret (single exit point)
+        if (empty($m->ok)) {
+            return $this->handleModelError($m, $result, $payload, $meta);
         }
 
         $raw = (string) $m->text; // expected HTML fragment per your prompt
@@ -1166,7 +1150,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // Plain-text fallback (for screen readers / no-HTML environments)
         $plain = trim(strip_tags($raw));
-        $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
+       // $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
+        $result->reply = $this->wire('sanitizer')->entities($plain);
 
         if ($plain !== '') {
             $hist[] = ['role'=>'assistant','content'=>$plain];
@@ -1197,15 +1182,102 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
 
         // Optional CTA
-        $payload['replyText'] = $result->reply;
-        $ctaHtml = $this->afterResponse($payload);
-        if ($ctaHtml) {
-            $result->cta = $ctaHtml;
+        $payload['reply'] = $result->reply;
+        $result = $this->handleCTA($payload, $result);
+        return $result;
+    }
+
+
+    protected function handleResponse($ctx, $data) {
+
+    }
+
+    protected function normaliseResponse($m): \stdClass
+    {
+        $type = gettype($m);
+
+        switch ($type) {
+            case 'string':
+                // JSON string response
+                $decoded = json_decode($m, false); // decode as object
+                return $decoded instanceof \stdClass ? $decoded : (object)[];
+
+            case 'array':
+                // Associative array -> object
+                return (object) $m;
+
+            case 'object':
+                // Already what we want
+                return $m instanceof \stdClass ? $m : (object) $m;
+
+            case 'NULL':
+                return (object)[];
+
+            case 'boolean':
+            case 'integer':
+            case 'double':
+                // Unexpected primitive; preserve value for debugging
+                return (object)['value' => $m];
+
+            default:
+                // Resources or anything truly odd
+                return (object)[];
+        }
+    }
+
+
+    protected function handleModelError(\stdClass $m, \stdClass $result, array $payload, array $meta): \stdClass
+    {
+        $code = '';
+        if (!empty($meta['err_code'])) {
+            $code = (string) $meta['err_code'];
+        } elseif (!empty($m->error)) {
+            $code = (string) $m->error;
+        } else {
+            $code = 'unknown';
+        }
+
+        // Normalize provider “too busy / quota / throttled” signals to case 15
+        if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
+            $result->error = $this->getErrorMessage(15); // object with msg + warning
+            $result->stop  = false;
+
+            $payload['status'] = $code;
+            $payload['reply']  = (string) ($result->reply ?? '');
+            $payload['error']  = $result->error;
+
+            return $this->handleCTA($payload, $result);
+        }
+
+        // Everything else → generic failure (case 6)
+        $result->error = $this->getErrorMessage(6); // object with msg + warning
+        $result->stop  = true;
+
+        $payload['status'] = 'failed';
+        $payload['reply']  = (string) ($result->reply ?? '');
+        $payload['error']  = $result->error;
+
+        return $this->handleCTA($payload, $result);
+    }
+
+
+    protected function handleCTA(array $payload, \stdClass $result) {
+        $cta = $this->afterResponse($payload);
+        // if original $payload array returned, hook not used
+        if(is_string($cta)) {
+            $cta = trim((string)$cta);
+            if ($cta !== '') {
+                $result->cta = $cta;
+            }
         }
         return $result;
     }
 
-    /** Example helper stubs  */
+    protected function renderAssistant($ctx, $normalised) {
+
+    }
+
+    /** helper stubs  */
 
     protected function consumeMessageCredit(): array
     {
@@ -1408,7 +1480,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function insertUserMessage(string $conversationUid, string $content, ?string $pageUrl = null, ?string $idempotencyKey = null): array {
+/*    public function insertUserMessage(string $conversationUid, string $content, ?string $pageUrl = null, ?string $idempotencyKey = null): array {
         return $this->withTransaction(function(\WireDatabasePDO $db) use ($conversationUid, $content, $pageUrl, $idempotencyKey) {
 
             // 1) Lock the conversation row to serialize writers for this conversation
@@ -1482,9 +1554,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'seq' => $nextSeq
             ];
         });
-    }
+    }*/
 
-    public function insertAssistantMessage(
+/*    public function insertAssistantMessage(
         string $conversationUid,
         string $content,
         int $promptTokens = 0,
@@ -1541,7 +1613,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'seq' => $nextSeq
             ];
         });
-    }
+    }*/
 
     private function makeUlid(): string {
         // Replace with a real ULID if you prefer; UUIDv4 here is fine as a drop-in
@@ -1551,7 +1623,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
-    private function checkForDuplicateMessages() {
+/*    private function checkForDuplicateMessages() {
         $db = $this->wire('database');
     $sql = <<<SQL
         SELECT conversation_id, seq, COUNT(*) AS c
@@ -1567,7 +1639,7 @@ SQL;
             wire('log')->save('errors', "Problem checking for dupicate ChatAI messages. " . $e->getMessage());
         }
 
-    }
+    }*/
 
     /** Hookable Methods **/
 
@@ -1583,7 +1655,9 @@ SQL;
 
     /** Hook: last-mile payload tweak before returning JSON to the widget. */
     /** @param array $payload */
-    public function ___afterResponse(array $payload): array { return $payload; }
+    public function ___afterResponse(array $payload): array {
+        return $payload;
+    }
 
     public function ___isEligibleForChat(Page $page): bool
     {
@@ -1594,17 +1668,23 @@ SQL;
 
 
     public function validTemplate(Page $p, array $cfg): bool {
-        if (!$p->id || !$p->isPublic()) return false;
+        if(!$p->id) return false;
+        if(!$p->template) return false;
 
         $inclIds = $cfg['rag_candidate_templates'] ?? [];
         $exclIds = $cfg['rag_exclude_templates'] ?? [];
 
         $tplId = (int) $p->template->id;
-        if (!empty($exclIds) && in_array($tplId, $exclIds)) return false;
-        if (!empty($inclIds) && !in_array($tplId, $inclIds)) return false;
-        if ($p->hasField('chatai_exclude') && $p->chatai_exclude) return false;
+
+        if(!empty($exclIds) && in_array($tplId, $exclIds, true)) return false;
+        if(!empty($inclIds) && !in_array($tplId, $inclIds, true)) return false;
+
+        // Optional per-page exclusion
+        if($p->hasField('chatai_exclude') && (int) $p->get('chatai_exclude') === 1) return false;
+
         return true;
     }
+
 
     /* Install, Upgrade, Uninstall */
 
@@ -1617,8 +1697,8 @@ SQL;
     CREATE TABLE IF NOT EXISTS chatai_prompt (
       id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
       json LONGTEXT NOT NULL,
-      created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB
       DEFAULT CHARSET=utf8mb4
       COLLATE=utf8mb4_unicode_520_ci;
@@ -1626,12 +1706,12 @@ SQL;
     -- Obs log: simple event logger for dashboard and stats
     CREATE TABLE IF NOT EXISTS chatai_obslog (
       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-      created DATETIME NOT NULL,
       chat_id VARCHAR(64) NOT NULL DEFAULT '',
       event_type VARCHAR(32) NOT NULL DEFAULT '',
       status VARCHAR(32) NOT NULL DEFAULT '',
       model VARCHAR(64) NOT NULL DEFAULT '',
       meta MEDIUMTEXT NULL,
+      created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       PRIMARY KEY (id),
       KEY ix_created (created),
       KEY ix_chat (chat_id),
@@ -1643,25 +1723,24 @@ SQL;
     -- Vectors: RAG chunks (can be regenerated)
     DROP TABLE IF EXISTS chatai_vec_chunks;
     CREATE TABLE chatai_vec_chunks (
-      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-      page_id INT UNSIGNED NOT NULL,
-      lang_id VARCHAR(16) NOT NULL DEFAULT '0',
-      chunk_index INT UNSIGNED NOT NULL,
-      source_url TEXT NULL,
-      title VARCHAR(255) NULL,
-      headings MEDIUMTEXT NULL,
-      slug VARCHAR(255) NULL,
-      text MEDIUMTEXT NOT NULL,
-      embedding_csv LONGTEXT NOT NULL,
-      created_at DATETIME NOT NULL,
-      indexed_at DATETIME NOT NULL,
-      PRIMARY KEY (id),
-      KEY ix_page_lang (page_id, lang_id),
-      KEY ix_page_indexed_at (page_id, indexed_at),
-      FULLTEXT KEY ft_text (text)
+     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+     page_id INT UNSIGNED NOT NULL,
+     lang_id VARCHAR(16) NOT NULL DEFAULT '0',
+     chunk_index INT UNSIGNED NOT NULL,
+     source_url TEXT NULL,
+     title VARCHAR(255) NULL,
+     headings MEDIUMTEXT NULL,
+     slug VARCHAR(255) NULL,
+     text MEDIUMTEXT NOT NULL,
+     embedding_csv LONGTEXT NOT NULL,
+     created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     indexed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+     PRIMARY KEY (id),
+     KEY ix_page_lang (page_id, lang_id),
+     KEY ix_page_indexed_at (page_id, indexed_at),
+     FULLTEXT KEY ft_text (text)
     ) ENGINE=InnoDB
       DEFAULT CHARSET=utf8mb4;
-
 SQL;
 
         try {

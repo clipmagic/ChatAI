@@ -228,7 +228,6 @@ document.addEventListener('DOMContentLoaded', function () {
             })
             .then(function (data) {
                 if (!data || typeof data.html !== 'string') return;
-                console.log(data.html)
                 body.innerHTML = data.html;
             })
             .catch(function (err) {

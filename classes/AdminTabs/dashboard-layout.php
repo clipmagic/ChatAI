@@ -1,12 +1,30 @@
 <?php namespace ProcessWire;
 
-$rangeDays    = isset($snapshot['range_days']) ? (int) $snapshot['range_days'] : (int) ($days ?? 7);
+function numbersToText(int $number) {
+    switch ($number) {
+        case $number > 1000000:
+            return number_format($number / 1000000, 2, '.', '') . "M";
+        case $number > 10000 && $number <= 1000000:
+            return number_format($number / 1000, 2, '.', '') . "K";
+    }
+    return $number;
+}
+
+$rangeDays     = isset ($snapshot['range_days']) ? (int) $snapshot['range_days'] : (int) ($days ?? 7);
 $totalChats    = (int) ($snapshot['total_chats']    ?? 0);
 $totalMessages = (int) ($snapshot['total_messages'] ?? 0);
 $totalErrors   = (int) ($snapshot['total_failed']   ?? 0);
 $totalCutoffs  = (int) ($snapshot['total_cutoffs']  ?? 0);
 $totalBlocked  = (int) ($snapshot['total_blocked']  ?? 0);
 $rateLimited   = (int) ($snapshot['rate_limited']   ?? 0);
+
+//$totalTokens   = (int) ($snapshot['total_tokens'] ?? 0);
+//$totalInput    = (int) ($snapshot['total_input'] ?? 0);
+//$totalOutput   = (int) ($snapshot['total_output'] ?? 0);
+
+$totalTokens   =  isset($snapshot['total_tokens']) ? numbersToText((int) $snapshot['total_tokens']) : 0;
+$totalInput    =  isset($snapshot['total_input'])  ? numbersToText((int) $snapshot['total_input'])  : 0;
+$totalOutput   =  isset($snapshot['total_output']) ? numbersToText((int) $snapshot['total_output']) : 0;
 
 
 $eventSummary = isset($eventSummary) && is_array($eventSummary) ? $eventSummary : [];
@@ -113,7 +131,7 @@ $dashboardConfig = [
                 </p>
                 <p class="chatai-dashboard-kpi-note">
                     <span id="kpi-errors-cutoffs-note">
-                        <?= sprintf(__('Errors: %d, cutoffs: %d'), $totalErrors, $totalCutoffs); ?>
+                        <?= sprintf(__('Errors: %d, Cutoffs: %d'), $totalErrors, $totalCutoffs); ?>
                     </span>
                 </p>
             </article>
@@ -125,7 +143,18 @@ $dashboardConfig = [
                 </p>
                 <p class="chatai-dashboard-kpi-note">
                     <span id="kpi-blocked-note">
-                        <?= sprintf(__('Blocked: %d, rate limited: %d'), $totalBlocked, $rateLimited); ?>
+                        <?= sprintf(__('Blocked: %d, Rate limited: %d'), $totalBlocked, $rateLimited); ?>
+                    </span>
+                </p>
+            </article>
+            <article class="chatai-dashboard-kpi">
+                <h3><?= __('Tokens'); ?></h3>
+                <p class="chatai-dashboard-kpi-value">
+                    <span id="kpi-tokens"><?= $totalTokens; ?></span>
+                </p>
+                <p class="chatai-dashboard-kpi-note">
+                    <span id="kpi-tokens-note">
+                        <?= sprintf(__('Input: %s, Output: %s'), $totalInput, $totalOutput); ?>
                     </span>
                 </p>
             </article>

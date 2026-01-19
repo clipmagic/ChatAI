@@ -132,24 +132,21 @@ class ChatAIObsLog extends Wire
         $db   = $this->wire('database');
         $days = max(1, min($days, 60));
 
-        $today = new \DateTime('today');
-        $from  = (clone $today)->modify('-' . ($days - 1) . ' days');
-        $fromStr = $from->format('Y-m-d 00:00:00');
-
-
-        $sql = "
-        SELECT DATE(created) AS d, event_type, COUNT(*) AS cnt
-        FROM " . self::TABLE . "
-        WHERE created >= :from
-          AND event_type IN ('reply','cutoff')
-        GROUP BY d, event_type
-        ORDER BY d ASC
-    ";
-
-        $stmt = $db->prepare($sql);
-        $stmt->bindValue(':from', $fromStr);
+        $to   = new \DateTime('now');
+        $from = (clone $to)->setTime(0, 0, 0)->modify('-' . ($days - 1) . ' days');
 
         try {
+            $sql = "
+            SELECT created, event_type
+            FROM " . self::TABLE . "
+            WHERE created >= :from
+              AND created <  :to
+              AND event_type IN ('reply','cutoff')
+        ";
+
+            $stmt = $db->prepare($sql);
+            $stmt->bindValue(':from', $from->format('Y-m-d H:i:s'));
+            $stmt->bindValue(':to',   $to->format('Y-m-d H:i:s'));
             $stmt->execute();
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
@@ -157,42 +154,29 @@ class ChatAIObsLog extends Wire
             return [];
         }
 
-        // Seed a full date range with zeros
+        // Seed days
         $byDate = [];
-        $today  = new \DateTime(); // now
         for ($i = $days - 1; $i >= 0; $i--) {
-            $d = (clone $today)->modify("-{$i} days")->format('Y-m-d');
+            $d = (clone $to)->modify("-{$i} days")->format('Y-m-d');
             $byDate[$d] = [
-                'date'  => $d,
-                'total' => 0,
-                // keep room for future series if needed
+                'date'   => $d,
+                'total'  => 0,
                 'reply'  => 0,
                 'cutoff' => 0,
             ];
         }
 
-
+        // Bucket rows
         foreach ($rows as $row) {
-            $d     = (string) $row['d'];
+            $d = (new \DateTime($row['created']))->format('Y-m-d');
             $etype = (string) $row['event_type'];
-            $cnt   = (int) $row['cnt'];
 
-            if (!isset($byDate[$d])) {
-                $byDate[$d] = [
-                    'date'  => $d,
-                    'total' => 0,
-                    'reply'  => 0,
-                    'cutoff' => 0,
-                ];
-            }
+            if (!isset($byDate[$d])) continue;
 
-            if ($etype === 'reply' || $etype === 'cutoff') {
-                $byDate[$d][$etype] += $cnt;
-                $byDate[$d]['total'] += $cnt;
-            }
+            $byDate[$d][$etype]++;
+            $byDate[$d]['total']++;
         }
 
-        // Return in chronological order
         return array_values($byDate);
     }
 
@@ -367,7 +351,6 @@ class ChatAIObsLog extends Wire
         return $out;
     }
 
-
     /**
      * Compact numeric snapshot for "insights" and dashboard.
      * Only looks at the last N days of data.
@@ -408,6 +391,9 @@ class ChatAIObsLog extends Wire
         $sumLatency    = 0;
         $latencyCount  = 0;
         $rateLimited   = 0;
+//        $totalTokens   = 0;
+        $totalInput    = 0;
+        $totalOutput   = 0;
 
         $chatIds       = [];
         $blockedIps    = [];
@@ -463,6 +449,14 @@ class ChatAIObsLog extends Wire
             if ($eventType === 'blocked' && isset($meta['ip_hash']) && $meta['ip_hash'] !== '') {
                 $blockedIps[(string) $meta['ip_hash']] = true;
             }
+
+            if(isset($meta['input_tokens']) && is_numeric($meta['input_tokens'])) {
+                $totalInput += (int) $meta['input_tokens'];
+            }
+            if(isset($meta['output_tokens']) && is_numeric($meta['output_tokens'])) {
+                $totalOutput += (int) $meta['output_tokens'];
+            }
+
         }
 
 
@@ -481,6 +475,9 @@ class ChatAIObsLog extends Wire
             'total_replies'      => $totalReplies,
             'total_cutoffs'      => $totalCutoffs,
             'total_blocked'      => $totalBlocked,
+            'total_tokens'       => $totalInput + $totalOutput,
+            'total_input'        => $totalInput,
+            'total_output'       => $totalOutput,
             'total_messages'     => $totalMessages,
             'total_chats'        => $totalChats,
             'avg_latency_ms'     => $avgLatency,
@@ -498,25 +495,31 @@ class ChatAIObsLog extends Wire
         ];
     }
 
-    public function fetchRange(\DateTimeInterface $from, \DateTimeInterface $to): array {
+    public function fetchRange(\DateTimeInterface $from, \DateTimeInterface $to, string $order = 'ASC'): array
+    {
         $db = $this->wire('database');
 
-        $sql = "
-            SELECT id, created, chat_id, event_type, status, model, meta
-            FROM " . self::TABLE . "
-            WHERE created >= :from
-              AND created <= :to
-            ORDER BY created ASC
-        ";
-
-        $stmt = $db->prepare($sql);
-        $stmt->bindValue(':from', $from->format('Y-m-d H:i:s'));
-        $stmt->bindValue(':to',   $to->format('Y-m-d H:i:s'));
-
+        $order = strtoupper($order);
+        if (!in_array($order, ['ASC', 'DESC'], true)) {
+            $order = 'ASC';
+        }
         try {
+            $sql = "
+                SELECT id, created AS created, chat_id, event_type, status, model, meta
+                FROM " . self::TABLE . "
+                WHERE created >= :from
+                  AND created <  :to
+                ORDER BY created {$order}
+            ";
+
+            $stmt = $db->prepare($sql);
+
+            $stmt->bindValue(':from', $from->format('Y-m-d H:i:s'));
+            $stmt->bindValue(':to',   $to->format('Y-m-d H:i:s'));
+
+
             $stmt->execute();
-            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
-            return $rows;
+            return $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
             $this->wire('log')->save('chatai-obslog', $e->getMessage());
             return [];

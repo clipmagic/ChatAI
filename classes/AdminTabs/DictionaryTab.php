@@ -145,12 +145,36 @@ class DictionaryTab
         $fieldset->label($m->_('Actions'));
 
 
-        // Action verbs
+        // Info action verbs
         $f = $m->get('InputfieldTextarea');
-        $f->attr('name+id', 'action_verbs');
-        $f->label($m->_('Triggers'));
+        $f->attr('name+id', 'info_action_verbs');
+        $f->label($m->_('Information triggers'));
         $f->notes("Comma separated.");
-        $value = $data['action_verbs'] ?? $m->_('switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove');
+        $value = $data['info_action_verbs'] ?? $m->_('summarise,summarize,summary,translate,explain,describe,show,list,compare,tell');
+        $f->val($value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->columnWidth(100);
+        $fieldset->add($f);
+
+//        $f = $m->get('InputfieldText');
+//        $f->attr('name+id', 'info_action_reply');
+//        $f->label($m->_('Reply'));
+//        $value = $data['action_reply'] ?? $m->_("Sure. Tell me what you'd like me to do with the site content.");
+//        $f->val($value);
+//        $f->stripTags = true;
+//        $f->useLanguages = true;
+//        $f->columnWidth(50);
+//        $fieldset->add($f);
+//
+//        $inputfields->add($fieldset);
+
+        // Blocked action verbs
+        $f = $m->get('InputfieldTextarea');
+        $f->attr('name+id', 'blocked_action_verbs');
+        $f->label($m->_('Block triggers'));
+        $f->notes("Comma separated.");
+        $value = $data['blocked_action_verbs'] ?? $m->_('switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove');
         $f->val($value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -158,9 +182,9 @@ class DictionaryTab
         $fieldset->add($f);
 
         $f = $m->get('InputfieldText');
-        $f->attr('name+id', 'action_reply');
+        $f->attr('name+id', 'blocked_action_reply');
         $f->label($m->_('Reply'));
-        $value = $data['action_reply'] ?? $m->_("Sure. Tell me what you'd like me to do with the site content.");
+        $value = $data['blocked_action_reply'] ?? $m->_("I’m sorry. I can’t do that. Please ask me something else about this site.");
         $f->val($value);
         $f->stripTags = true;
         $f->useLanguages = true;
@@ -227,6 +251,23 @@ class DictionaryTab
         $f->val( $value);
         $f->stripTags = true;
         $f->useLanguages = true;
+        $f->columnWidth(100);
+        $fieldset->add($f);
+
+        $inputfields->add($fieldset);
+
+        $fieldset = $m->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'noaccess');
+        $fieldset->label($m->_('No page access'));
+
+        $f = $m->get('InputfieldText');
+        $f->attr('name+id', 'no_access');
+        $f->label($m->_('Reply'));
+        $value = $data['no_access_reply'] ?? $m->_("I’m sorry, I don’t have access to the page. Please ask me something else about this site.");
+        $f->val( $value);
+        $f->stripTags = true;
+        $f->useLanguages = true;
+        $f->notes($m->_("The user has requested information about a published, viewable page but the bot does not have access."));
         $f->columnWidth(100);
         $fieldset->add($f);
 

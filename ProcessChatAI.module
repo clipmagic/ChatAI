@@ -152,6 +152,7 @@ class ProcessChatAI extends Process
         if ($logger && method_exists($logger, 'buildInsightsSnapshot')) {
             $kpis = $logger->buildInsightsSnapshot($days);
         }
+        bd($kpis);
         return json_encode($kpis);
     }
 
@@ -276,9 +277,9 @@ class ProcessChatAI extends Process
             return;
         }
 
-        $today = new \DateTime('today');
-        $from  = (clone $today)->modify('-' . ($days - 1) . ' days');
-        $rows = $logger->fetchRange($from, $today);
+        $to   = new \DateTime('now');
+        $from = (clone $to)->setTime(0, 0, 0)->modify('-' . ($days - 1) . ' days');
+        $rows = $logger->fetchRange($from, $to);
 
         $filename = sprintf(
             'chatai_obslog_last_%dd_%s.csv',
@@ -500,7 +501,11 @@ class ProcessChatAI extends Process
             $summary = $this->runBackfillReconcile($selector, $startId, $batchSize, $dryRun, $forceRebuild);
             $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
 
-            $this->message($this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary));
+            $prefix = $dryRun
+                ? $this->_('DRY RUN — no database changes were made. ')
+                : '';
+
+            $this->message($prefix . $this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary));
             if(!empty($summary['_warn'])) {
                 $this->warning($summary['_warn']);
                 unset($summary['_warn']); // keep the JSON summary clean
@@ -724,25 +729,25 @@ class ProcessChatAI extends Process
                 if($eligible) $summary['eligible_total']++;
                 else $summary['ineligible_total']++;
 
-                // Ineligible: keep your existing rule (delete only if in trash and already in DB)
+                // Delete vectors if the page is ineligible OR in the trash (page-level count)
+                if((!$eligible || $page->isTrash()) && $hasVectors) {
+
+                    // Delegate deletion through the shared function so behaviour stays consistent
+                    $res = $chatai->processRagForPage($page, $cfg, [
+                        'mode'   => 'bulk',
+                        'dryRun' => (bool) $dryRun
+                    ]);
+
+                    // Count deletion regardless of dry-run (intent)
+                    $summary['deleted']++;
+
+                    if(!empty($res['error'])) $summary['errors']++;
+                }
+
                 if(!$eligible) {
-                    if($hasVectors && $page->isTrash()) {
-
-                        // Delegate deletion through the shared function so behaviour stays consistent
-                        $res = $chatai->processRagForPage($page, $cfg, [
-                            'mode'   => 'bulk',
-                            'dryRun' => (bool) $dryRun
-                        ]);
-
-                        // Count deletion regardless of dry-run (intent)
-                        $summary['deleted']++;
-
-                        if(!empty($res['error'])) $summary['errors']++;
-                    }
                     $summary['last_id'] = (int) $page->id;
                     continue;
                 }
-
                 $opts =  [
                     'mode'         => 'bulk',
                     'dryRun'       => (bool) $dryRun,
