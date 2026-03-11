@@ -24,35 +24,33 @@ class RAG extends Wire {
     /*** TABLE NAMES ***/
     public const CHATAI_VEC_TABLE = 'chatai_vec_chunks';
 
+    public $indexer = '';
     public function __construct() { parent::__construct(); }
 
     public function init() {
         require_once '../../classes/Indexing/IndexContentExtractor.php';
-        require_once '../../classes/Indexing/ChatAIIndexer.php';
-
-        // Shared services
-        $this->indexer = new \ProcessWire\ChatAIIndexer();
-        $this->indexer->setWire($this->wire());
-
     }
 
     /*************************
      * 1) CONFIG HELPERS     *
      *************************/
 
+    protected function chatAI(): ?ChatAI {
+        return $this->wire('modules')->get('ChatAI');
+    }
+
     /** Page must use a configured template to be indexed. */
     public function shouldIndexPage(Page $page, array $cfg): bool {
-
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $chatai = $this->wire('modules')->get('ChatAI');
-        $config = $this->wire('config');
-
-        $cfg = $chatProcess->loadPromptSettings();
-
+        $chatai  = $this->ChatAI();
+        $config  = $this->wire('config');
+        if(!$chatai) return false;
         if(!$chatai->validTemplate($page, $cfg)) return false;
-        if ($page->id === $config->http404PageID) return false;                         // your 404 page (or use config)
-        if (in_array($page->template->name, ['http404'], true)) return false;
-        if (in_array($page->name, ['http404'], true)) return false;
+        if($page->id === $config->http404PageID) return false;
+        if($page->template && $page->template->name === 'http404') return false;
+        if($page->name === 'http404') return false;
+        // Must be published (hidden is allowed)
+        if($page->isUnpublished()) return false;
+        if($page->isTrash()) return false;
 
         return true;
     }
@@ -62,19 +60,21 @@ class RAG extends Wire {
      * - returns true if page has no vectors OR the latest vector is older than $page->modified
      * - returns false if vectors exist and are up-to-date
      */
-    public function shouldReindex(Page $page): bool
-    {
-        $db  = $this->wire('database');
-        $tbl = $db->escapeTable(self::CHATAI_VEC_TABLE);
+    public function getPageVectorStats(int $pageId): array {
+        $db = $this->wire('database');
+        $stmt = $db->prepare(
+            "SELECT COUNT(*) AS chunks, MAX(indexed_at) AS indexed_at
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE page_id=?"
+        );
+        $stmt->execute([$pageId]);
+        $row = (array) $stmt->fetch(\PDO::FETCH_ASSOC);
 
-        $stmt = $db->prepare("SELECT MAX(updated_at) AS m FROM {$tbl} WHERE page_id = ?");
-        $stmt->execute([(int)$page->id]);
-        $max = $stmt->fetchColumn(); // null if no rows
-
-        return !$max || strtotime($max) < (int)$page->modified;
+        return [
+            'chunks'    => (int) ($row['chunks'] ?? 0),
+            'indexed_at'=> (string) $row['indexed_at'] ?? ''
+        ];
     }
-
-
 
     /**********************
      * 2) LOW-LEVEL TOOLS *
@@ -151,6 +151,7 @@ class RAG extends Wire {
     protected function packCsv(array $v): string {
         return implode(',', array_map(fn($x) => rtrim(rtrim(sprintf('%.6f', $x), '0'), '.'), $v));
     }
+
     protected function unpackCsv(string $csv): array { return $csv ? array_map('floatval', explode(',', $csv)) : []; }
 
     protected function cosine(array $a, array $b): float {
@@ -219,39 +220,36 @@ class RAG extends Wire {
         $chunks = $this->chunkTextByChars($text);
         if (!$chunks) return;
 
-        $now = date('Y-m-d H:i:s');
         $stmtIns = $db->prepare(
             "INSERT INTO `" . self::CHATAI_VEC_TABLE . "`
-             (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv, created_at, updated_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+     (id, page_id, lang_id, chunk_index, source_url, title, headings, slug, text, embedding_csv)
+     VALUES (?,?,?,?,?,?,?,?,?,?)"
         );
 
         $url = $page->httpUrl(true);
-        $title = (string)$page->title;
-        $headings = \json_encode($content['heads']);
-
-
+        $title = (string) $page->title;
+        $headings = json_encode($content['heads']);
         $slug = $page->name;
-        $idx = 0;
 
+        $idx = 0;
         foreach ($chunks as $c) {
             $vec = $this->embedText($c);
             $csv = $this->packCsv($vec);
+
             $stmtIns->execute([
                 null,
                 $page->id,
                 $langId,
-                (int)$idx++,
+                (int) $idx++,
                 $url,
                 $title,
                 $headings,
                 $slug,
                 $c,
                 $csv,
-                $now,
-                $now
             ]);
         }
+
     }
 
     /**
@@ -260,22 +258,21 @@ class RAG extends Wire {
     public function collectPageText(Page $page, array $cfg): void {
         if (!$this->shouldIndexPage($page, $cfg)) return;
 
-        $languages = $this->wire('languages');
         $user = $this->wire('user');
+        $indexer = $this->chatAI()->indexer();
+        $pageLangs = $page->getLanguages();
 
-        $this->indexer = new ChatAIIndexer();
-
-        if ($languages && $languages->count()) {
+        if ($pageLangs->count > 0 && $page->isPublic()) {
             $origLang = $user && $user->language ? $user->language : null;
-            foreach ($languages as $lang) {
+            foreach ($pageLangs as $lang) {
                 $user->setLanguage($lang);
                 $langId = (int)$lang->id;
-                $content = $this->indexer->buildForPage($page, $langId);
+                $content = $indexer->buildForPage($page, $langId);
                 $this->indexPageTextChunks($page, $langId, $content);
             }
             if ($origLang) $user->setLanguage($origLang);
         } else {
-            $content = $this->indexer->buildForPage($page, 0);
+            $content = $indexer->buildForPage($page, 0);
             $this->indexPageTextChunks($page, 0, $content);
         }
     }
@@ -284,22 +281,35 @@ class RAG extends Wire {
      * 4) RETRIEVAL *
      ****************/
 
-    /**
-     * FULLTEXT prefilter (per lang), cosine rerank.
-     * $prefilter bounds the initial candidate count – tune for your content size.
-     */
-    public function retrieveTopK(string $query, int $userLangId, int $k = 6, int $prefilter = 60): array {
-        $db = $this->wire('database');
+    public function retrieveTopKForPage(
+        string $query,
+        int $ragLangId,
+        int $pageId,
+        int $k = 6,
+        int $prefilter = 60,
+        ?User $user = null
+    ): array {
+
+
+        if ($pageId < 1) return [];
+
+        $pages = $this->wire('pages');
+        $page  = $pages->get($pageId);
+
+        if (!$page->id || !$page->viewable($user)) return [];
+
+        $db   = $this->wire('database');
         $qVec = $this->embedText($query);
 
         try {
             $stmt = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
-                  LIMIT ?"
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=? AND page_id=?
+               AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+             LIMIT ?"
             );
-            $stmt->execute([$userLangId, $query, $prefilter]);
+            $stmt->execute([$ragLangId, $pageId, $query, $prefilter]);
             $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) {
             $rows = [];
@@ -308,22 +318,130 @@ class RAG extends Wire {
         if (!$rows) {
             $stmt2 = $db->prepare(
                 "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
-                   FROM `" . self::CHATAI_VEC_TABLE . "`
-                  WHERE lang_id=?
-                  LIMIT 200"
+             FROM `" . self::CHATAI_VEC_TABLE . "`
+             WHERE lang_id=? AND page_id=?
+             LIMIT 200"
+            );
+            $stmt2->execute([$ragLangId, $pageId]);
+            $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        }
+
+        // Score chunks (no page collapse)
+        $scored = [];
+        foreach ($rows as $r) {
+            if (empty($r['source_url'])) continue;
+            $vec = $this->unpackCsv($r['embedding_csv']);
+            $r['score'] = $this->cosine($qVec, $vec);
+            $scored[] = $r;
+        }
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return array_slice($scored, 0, $k);
+    }
+
+
+    public function retrieveTopK(
+        string $query,
+        int $userLangId,
+        int $k = 6,
+        int $prefilter = 60,
+        ?User $user = null
+    ): array {
+
+        $user = $user ?: $this->wire('user');
+
+        $db   = $this->wire('database');
+        $qVec = $this->embedText($query);
+
+        try {
+            $stmt = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE lang_id=? AND MATCH(text) AGAINST (? IN NATURAL LANGUAGE MODE)
+         LIMIT ?"
+            );
+            $stmt->execute([$userLangId, $query, $prefilter]);
+            $rows = $stmt->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {
+            $rows = [];
+        }
+
+        if(!$rows) {
+            $stmt2 = $db->prepare(
+                "SELECT id,page_id,lang_id,chunk_index,title,text,embedding_csv,source_url
+         FROM `" . self::CHATAI_VEC_TABLE . "`
+         WHERE lang_id=?
+         LIMIT 200"
             );
             $stmt2->execute([$userLangId]);
             $rows = $stmt2->fetchAll(\PDO::FETCH_ASSOC) ?: [];
         }
 
+        // Score all candidate chunks
         $scored = [];
-        foreach ($rows as $r) {
+        foreach($rows as $r) {
+            if(empty($r['source_url'])) continue;
+            if(empty($r['embedding_csv'])) continue;
+
             $vec = $this->unpackCsv($r['embedding_csv']);
             $r['score'] = $this->cosine($qVec, $vec);
             $scored[] = $r;
         }
-        usort($scored, fn($a,$b) => $b['score'] <=> $a['score']);
-        return array_slice($scored, 0, $k);
+
+        if(!$scored) return [];
+
+        usort($scored, fn($a, $b) => $b['score'] <=> $a['score']);
+
+        // NEW: permission filter by page->viewable($user)
+        $pageIds = [];
+        foreach($scored as $row) {
+            $pid = (int) ($row['page_id'] ?? 0);
+            if($pid > 0) $pageIds[$pid] = $pid;
+            if(count($pageIds) >= ($k * 10)) break; // guard: we only need to check a sensible set
+        }
+
+        if($pageIds) {
+            $pages = $this->wire('pages');
+
+            // Bulk-load candidates in one query
+            $selector = "id=" . implode('|', $pageIds) . ", include=hidden";
+            $cand = $pages->find($selector);
+
+            $allowed = [];
+            foreach($cand as $p) {
+                if($p->id && $p->viewable($user)) $allowed[(int)$p->id] = true;
+            }
+
+            // Filter scored rows to allowed page IDs
+            if($allowed) {
+                $scored = array_values(array_filter($scored, function($row) use ($allowed) {
+                    $pid = (int) ($row['page_id'] ?? 0);
+                    return $pid > 0 && isset($allowed[$pid]);
+                }));
+            } else {
+                $scored = [];
+            }
+        }
+
+        if(!$scored) return [];
+
+        // Collapse to unique pages (keep best chunk per page)
+        $byPage = [];
+        foreach($scored as $row) {
+            $pid = (int) $row['page_id'];
+            if(!isset($byPage[$pid]) || $row['score'] > $byPage[$pid]['score']) {
+                $byPage[$pid] = $row;
+            }
+            if(count($byPage) >= ($k * 2)) {
+                // guard (optional)
+            }
+        }
+
+        // Sort the representative chunks by score and take top K pages
+        $uniq = array_values($byPage);
+        usort($uniq, fn($a, $b) => $b['score'] <=> $a['score']);
+        return array_slice($uniq, 0, $k);
     }
 
     /** Build a compact context string from chunks (bounded by $maxChars). */
@@ -338,23 +456,30 @@ class RAG extends Wire {
         return ltrim($buf);
     }
 
+    // fetch cfg value by language: key__{langId} → key → ''
+    protected function cfgLang(string $key, array $cfg, int $langId): string {
+        $k = $key . '__' . $langId;
+        return (string)($cfg[$k] ?? $cfg[$key] ?? '');
+    }
+
     /**
-     * Example glue to your chat call – kept as a stub.
-     * Construct messages with the built context and call your existing ChatAI chat method.
+     * Return the list of languages that are publicly viewable for this page.
      */
-    public function answerWithRAG(string $userText, ?int $userLangId = null): string {
-        if ($userLangId === null) {
-            $languages = $this->wire('languages');
-            $lang = $this->wire('user')->language ?? ($languages ? $languages->getDefault() : null);
-            $userLangId = $lang ? (int)$lang->id : 0;
+    function ragPublicLanguages(Page $page): array {
+        $guest = wire('users')->get('guest');
+        $langs = [];
+
+        foreach($page->getLanguages() as $lang) {
+            // Skip if this language isn't viewable to guests for this page
+            if(!$page->viewable($guest, $lang)) continue;
+
+            // Extra guard: page itself must be public (no admin-only, etc.)
+            if(!$page->isPublic()) continue;
+
+            $langs[] = $lang;
         }
 
-
-        $top = $this->retrieveTopK($userText, $userLangId, 6);
-        $context = $this->buildContextFromChunks($top);
-
-        // TODO: integrate with your existing chat call. For now, return the context for inspection.
-        return $context !== '' ? $context : '[no site context matched – try another query]';
+        return $langs;
     }
 }
 

@@ -7,10 +7,11 @@
  * Output whatever content you want the model to see – keep it text‑first.
  */
 
+
 // Optional: simple helper to print a block safely
 $printBlock = function($html) {
     if(!is_string($html) || $html === '') return;
-    echo "<div>" . $html . "</div>\n"; // RAG.php will convert markup → plain text
+    echo "</div><div>" . $html . "</div>\n"; // RAG.php will convert markup → plain text
 };
 
 // 1) Prioritise key headline fields if present

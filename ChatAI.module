@@ -9,11 +9,27 @@ use stdClass;
 
 class ChatAI extends WireData implements Module, ConfigurableModule
 {
+    public const CHATAI_VEC_TABLE = 'chatai_vec_chunks';
+
     const dbTableName = 'chatai';
 
     const dbTablePrompt = 'chatai_prompt';
 
     const modName = 'ChatAI';
+
+    /** @var \ProcessWire\RAG */
+    protected ?\ProcessWire\RAG $rag = null;
+
+    /** @var \ProcessWire\ChatAIIndexer */
+    protected ?\ProcessWire\ChatAIIndexer $indexer = null;
+
+    /** @var \ProcessWire\Classifier */
+    protected ?\ProcessWire\Classifier $classifier = null;
+
+    /** @var \ProcessWire\ChatAIObsLog */
+    protected ?\ProcessWire\ChatAIObsLog $logger = null;
+
+    protected ?\ProcessWire\ChatAIPromptService $promptService = null;
 
 
     public function construct()
@@ -23,28 +39,111 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function init()
     {
-        if (empty($this->api_key)) $this->warning('OpenAI API key missing; ChatAI may not function.');
-
+        if($this->wire('process') && empty($this->api_key)) {
+            $this->warning('OpenAI API key missing; ChatAI may not function.');
+        }
 
         // Load helpers
         require_once __DIR__ . '/classes/Indexing/IndexContentExtractor.php';
         require_once __DIR__ . '/classes/Indexing/ChatAIIndexer.php';
         require_once __DIR__ . '/classes/RAG/RAG.php';
+        require_once __DIR__ . '/classes/Classifier.php';
+        require_once __DIR__ . '/classes/ChatAIObsLog.php';
+        require_once __DIR__ . '/classes/ChatAIPromptService.php';
 
         // Shared services
-        $this->rag = new \ProcessWire\RAG();
-        $this->rag->setWire($this->wire());
+        if($this->rag === null) {
+            $this->rag = new \ProcessWire\RAG();
+            $this->rag->setWire($this->wire());
+        }
 
-        $this->indexer = new \ProcessWire\ChatAIIndexer();
-        $this->indexer->setWire($this->wire());
-    }
+        if($this->indexer === null) {
+            $this->indexer = new \ProcessWire\ChatAIIndexer();
+            $this->indexer->setWire($this->wire());
+        }
 
-    public function getModuleConfigInputfields(array $data)
+        if($this->classifier === null) {
+            $this->classifier = new \ProcessWire\Classifier();
+            $this->classifier->setWire($this->wire());
+        }
+
+        if($this->logger === null) {
+            $this->logger = new \ProcessWire\ChatAIObsLog();
+            $this->logger->setWire($this->wire());
+        }
+
+        if($this->promptService === null) {
+            $this->promptService = new \ProcessWire\ChatAIPromptService();
+            $this->promptService->setWire($this->wire());
+        }
+
+        // Hooks
+        $this->addHookAfter('Pages::saved', function (HookEvent $event) {
+
+            $page    = $event->arguments(0);
+            $changes = (array) ($event->arguments(1) ?? []);
+
+            $cfg = (array) $this->promptService()->loadPromptSettings();
+            if(empty($cfg['chunk_on_save'])) return;
+
+            $changedKeys    = array_keys($changes);
+            $meaningfulKeys = array_diff($changedKeys, ['status', 'modified', 'template']);
+            $contentChanged = !empty($meaningfulKeys);
+
+            $this->processRagForPage($page, $cfg, [
+                'mode'           => 'on_save',
+                'contentChanged' => $contentChanged,
+                'dryRun'         => false,
+            ]);
+        });
+
+        $this->addHookAfter('Pages::deleted', function($event) {
+            $page = $event->arguments(0);
+            $rag  = $this->rag();
+            try { $rag->deletePageVectors($page); }
+            catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage()); }
+        });
+
+        $this->addHookAfter('ImportPagesCSV::execute', function(HookEvent $event) {
+
+            $svc = $this->promptService();
+            $cfg = $svc->loadPromptSettings();
+            if (!empty($cfg['chunk_on_save'])) {
+                $ips = $event->object;
+                $ips->warning(
+                    $this->_('ChatAI "Update on Save" is currently enabled. For large imports, consider turning it off temporarily to avoid heavy re-indexing during import.')
+                );
+            }
+        });
+
+        $this->addHookAfter('Languages::deleted', function(HookEvent $event) {
+
+            $language = $event->arguments(0); // Page
+            if(!$language || !$language->id) return;
+
+            $langId = (int) $language->id;
+
+            try {
+                $this->rag()->deleteLanguageVectors($langId); // implement this
+                $this->wire('log')->save('chatai', "Deleted vectors for removed language lang_id={$langId}");
+            } catch(\Throwable $e) {
+                $this->wire('log')->save('chatai', "Language vector delete failed lang_id={$langId}: " . $e->getMessage());
+            }
+        });
+
+     }
+
+ /*   public function getModuleConfigInputfields(array $data) : InputfieldWrapper
     {
-        $modules = wire('modules');
+        $modules     = wire('modules');
+
+        $this->___refreshModels();
+
         $inputfields = new InputfieldWrapper();
 
+        // -----------------------------------------------------
         // OpenAI Settings
+        // -----------------------------------------------------
         $fieldset = $modules->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'openai');
         $fieldset->label = $this->_('OpenAI Settings');
@@ -57,109 +156,129 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->value = $data['api_key'] ?? '';
         $fieldset->add($f);
 
+        // Model select – GPT-5 family
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'model');
         $f->label = $this->_('OpenAI Model');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 100;
+
         $f->addOptions([
-            'gpt-5-mini' => "gpt-5-mini",
-            'gpt-5-nano' => 'gpt-5-nano',
-            'gpt-5' => 'gpt-5',
-            'gpt-3.5-turbo' => 'gpt-3.5-turbo',
-            'gpt-4o' => 'gpt-4o'
+            'gpt-5-mini' => 'gpt-5-mini (recommended)',
+            'gpt-5-nano' => 'gpt-5-nano (fastest / cheapest)',
+            'gpt-5.2'    => 'gpt-5.2 (stronger reasoning)',
+            'gpt-5.1'    => 'gpt-5.1',
+            'gpt-5'      => 'gpt-5 (legacy)',
+            'gpt-6'      => 'gpt-6 (not yet released)',
         ]);
         $f->value = $data['model'] ?? 'gpt-5-mini';
         $fieldset->add($f);
 
+
+        // Refresh models from OpenAI
+        $f = $modules->get('InputfieldSubmit');
+        $f->attr('name+id', 'refresh_models');
+        $f->value = $this->_('Refresh Model List');
+        $f->icon = 'refresh';
+        $f->columnWidth = 100;
+        $f->attr('style', 'margin-block-end: 20px;');
+
+        $fieldset->add($f);
+
+        $subfieldset = $modules->get('InputfieldFieldset');
+        $subfieldset->attr('name+id', 'finetune');
+        $subfieldset->label = $this->_('Fine Tune Settings');
+
+        // Verbosity (used by your buildPostData; always visible now)
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'verbosity');
         $f->label = $this->_('Verbosity');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->addOptions([
-            'low' => "Low",
+            'low'    => 'Low',
             'medium' => 'Medium',
-            'high' => 'High'
+            'high'   => 'High',
         ]);
         $f->value = $data['verbosity'] ?? 'medium';
-        $f->showIf("model=gpt-5|gpt-5-mini|gpt-5-nano");
-        $fieldset->add($f);
+        $subfieldset->add($f);
 
+        // Reasoning Effort (GPT-5 style knob; always visible now)
         $f = $modules->get('InputfieldSelect');
         $f->attr('name+id', 'reasoningEffort');
         $f->label = $this->_('Reasoning Effort');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->addOptions([
-            'minimal' => "Minimal",
-            'low' => "Low",
-            'medium' => 'Medium',
-            'high' => 'High'
+            'minimal' => 'Minimal',
+            'low'     => 'Low',
+            'medium'  => 'Medium',
+            'high'    => 'High',
         ]);
-        $f->showIf("model=gpt-5|gpt-5-mini|gpt-5-nano");
         $f->value = $data['reasoningEffort'] ?? 'medium';
-        $fieldset->add($f);
+        $subfieldset->add($f);
 
-
-        $f = $modules->get('InputfieldFloat');
-        $f->attr('name+id', 'temperature');
-        $f->label = $this->_('Temperature (0–1)');
-        $f->columnWidth	= 20;
-        $f->notes = $this->_('Lower is more factual, higher is more creative');
-        $f->step = 0.1;
-        $f->min = 0;
-        $f->max = 1;
-        $f->value = $data['temperature'] ?? 0.7;
-        $f->showIf("model!=gpt-5|gpt-5-mini|gpt-5-nano");
-        $fieldset->add($f);
-
+        // Max tokens per message (Responses: max_output_tokens)
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_completion_tokens');
         $f->label = $this->_('Max tokens');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Max tokens per message');
         $f->value = $data['max_completion_tokens'] ?? 1000;
-        $fieldset->add($f);
+        $subfieldset->add($f);
 
+        // Max questions per conversation
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_messages');
         $f->label = $this->_('Maximum questions');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Max questions per conversation');
         $f->value = $data['max_messages'] ?? 20;
-        $fieldset->add($f);
+        $subfieldset->add($f);
 
+        // Blacklist strikes
         $f = $modules->get('InputfieldInteger');
         $f->attr('name+id', 'max_strikes');
         $f->label = $this->_('Maximum blacklist');
-        $f->columnWidth	= 20;
+        $f->columnWidth = 20;
         $f->notes = $this->_('Number of blacklist strikes before being blocked');
         $f->value = $data['max_strikes'] ?? 3;
-        $fieldset->add($f);
+        $subfieldset->add($f);
 
+        $fieldset->add($subfieldset);
 
         $inputfields->add($fieldset);
 
-
+        // -----------------------------------------------------
+        // Roles allowed to craft prompt
+        // -----------------------------------------------------
         $f = $modules->get('InputfieldCheckboxes');
         $f->attr('name+id', 'prompt_roles');
         $f->label = $this->_('Roles allowed to craft prompt');
         $roles = $this->wire('roles');
         $options = [];
-        $pageEditPermission = $roles->find("status=published");
-        if($pageEditPermission->count > 0) {
-            foreach($pageEditPermission->roles as $role) {
-                if(!$role->hasPermission('page-edit') || $role->name === 'superuser' ) continue;
-                $options[$role->name] = $role->name;
-            }
-            $f->addOptions($options);
+
+        // List all roles except guest and superuser.
+        // Superuser is always allowed;
+        foreach ($roles as $role) {
+            if ($role->name === 'superuser') continue;
+            $options[$role->name] = $role->name;
         }
-        $value = $data['prompt_roles'] ?? '';
-        $f->attr('value', $value);
+
+        $f->addOptions($options);
+
+        // Stored as an array of role names; if empty, only superuser can use the dashboard
+        $f->value = $data['prompt_roles'] ?? [];
+
         $f->columnWidth = 50;
-        $note = $this->_("Superuser enabled by default.\r\nYou may optionally add a ChatAI specific role with page-edit permission.");
+        $note = $this->_(
+            "Superuser is always allowed.\r\n" .
+            "If no roles are selected, only superusers can access the ChatAI dashboard tabs.\r\n" .
+            "Select one or more roles (for example the 'chatai' role created on install) to allow them as well."
+        );
         $f->notes($note);
         $inputfields->add($f);
 
+        // -----------------------------------------------------
         // File locations
+        // -----------------------------------------------------
         $fieldset = $modules->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'files');
         $fieldset->label($this->_('Files'));
@@ -178,7 +297,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->label($this->_('Path to CSS file'));
         $f->notes("Default is /site/modules/ChatAI/chatai.css");
         $value = $data['css'] ?? '/site/modules/ChatAI/chatai.css';
-        $f->attr('value', $value );
+        $f->attr('value', $value);
         $f->stripTags = true;
         $fieldset->add($f);
 
@@ -190,22 +309,237 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $f->attr('value', $value);
         $f->stripTags = true;
         $fieldset->add($f);
+
         $inputfields->add($fieldset);
 
+        // -----------------------------------------------------
+        // Debug helpers
+        // -----------------------------------------------------
+        $fieldset = $modules->get('InputfieldFieldset');
+        $fieldset->attr('name+id', 'chatai_debug');
+        $fieldset->label = $this->_('Debug helpers');
+        $fieldset->collapsed = 1; // collapsed by default
+        $fieldset->description = $this->_('Development-only tools for testing edge cases. These settings should remain OFF in production.');
+        $inputfields->add($fieldset);
+
+        // Master toggle
+        $f = $modules->get('InputfieldCheckbox');
+        $f->attr('name+id', 'debug_enabled');
+        $f->label = $this->_('Enable debug helpers');
+        $f->value = (int) ($data['debug_enabled'] ?? 0);
+        $fieldset->add($f);
+
+        // ---- Forced cutoff ----
+        $f = $modules->get('InputfieldCheckbox');
+        $f->attr('name+id', 'debug_force_cutoff');
+        $f->label = $this->_('Force cutoff response');
+        $f->notes = $this->_('Truncates the assistant response server-side, sanitises to plain text, and sets cutoff=true.');
+        $f->value = (int) ($data['debug_force_cutoff'] ?? 0);
+        $f->showIf = 'debug_enabled=1';
+        $fieldset->add($f);
+
+        $f = $modules->get('InputfieldSelect');
+        $f->attr('name+id', 'debug_cutoff_mode');
+        $f->label = $this->_('Cutoff mode');
+        $f->addOptions([
+            'chars'   => $this->_('Characters'),
+            'words'   => $this->_('Words'),
+            'awkward' => $this->_('Awkward boundary (stress test)'),
+        ]);
+        $f->value = $data['debug_cutoff_mode'] ?? 'chars';
+        $f->columnWidth = 33;
+        $f->showIf = 'debug_enabled=1, debug_force_cutoff=1';
+        $fieldset->add($f);
+
+        $f = $modules->get('InputfieldInteger');
+        $f->attr('name+id', 'debug_cutoff_value');
+        $f->label = $this->_('Cutoff value');
+        $f->notes = $this->_('For Characters: number of chars. For Words: number of words. For Awkward: base char count before stress text is appended.');
+        $f->value = (int) ($data['debug_cutoff_value'] ?? 200);
+        $f->columnWidth = 33;
+        $f->showIf = 'debug_enabled=1, debug_force_cutoff=1';
+        $fieldset->add($f);
+
+        // ---- Latency injection (optional but useful) ----
+        $f = $modules->get('InputfieldSelect');
+        $f->attr('name+id', 'debug_latency_ms');
+        $f->label = $this->_('Artificial delay');
+        $f->notes = $this->_('Adds a server-side delay (superuser only) to test busy guards and UX states.');
+        $f->addOptions([
+            '0'    => $this->_('None'),
+            '250'  => $this->_('250 ms'),
+            '1000' => $this->_('1 s'),
+            '3000' => $this->_('3 s'),
+            '8000' => $this->_('8 s'),
+        ]);
+        $f->value = (string) ($data['debug_latency_ms'] ?? '0');
+        $f->columnWidth = 33;
+        $f->showIf = 'debug_enabled=1';
+        $fieldset->add($f);
 
         $inputfields->add($fieldset);
 
         return $inputfields;
+    }*/
+
+    /* Hook functions */
+    public function processRagForPage(Page $page, array $cfg, array $opts = []): array {
+
+        $dryRun         = !empty($opts['dryRun']);
+        $mode           = (string) ($opts['mode'] ?? 'bulk'); // 'on_save' | 'bulk'
+        $contentChanged = ($mode === 'on_save') ? !empty($opts['contentChanged']) : true;
+        $forceRebuild   = !empty($opts['forceRebuild']); // bulk only: rebuild even if already in DB
+
+        $out = [
+            'page_id'          => (int) $page->id,
+            'eligible_now'     => false,
+            'deleted'          => false,
+            'indexed_new'      => false,
+            'indexed_replaced' => false,
+            'skipped'          => '',
+            'error'            => null,
+        ];
+
+
+        $rag = $this->rag();
+
+        // Determine indexability now
+        $isIndexableNow = $rag->shouldIndexPage($page, $cfg);
+
+        // Optional site override
+        if($isIndexableNow && method_exists($this, 'isEligibleForChat') && !$this->isEligibleForChat($page)) {
+            $isIndexableNow = false;
+        }
+
+        $out['eligible_now'] = $isIndexableNow;
+
+        // If not indexable now, remove vectors and stop
+        if(!$isIndexableNow) {
+            if(!$dryRun) {
+                try {
+                    $rag->deletePageVectors($page);
+                } catch(\Throwable $e) {
+                    $out['error'] = $e->getMessage();
+                    $this->wire('log')->save('chatai', "RAG delete error, Page id {$page->id}: " . $e->getMessage());
+                }
+            }
+            $out['deleted'] = true; // intent: should be deleted (or would be in dry run)
+            $out['skipped'] = 'not_indexable';
+            return $out;
+        }
+
+        // On-save mode: only do work if meaningful content changed
+        if($mode === 'on_save' && !$contentChanged) {
+            $out['skipped'] = 'no_content_change';
+            return $out;
+        }
+
+        if($mode === 'bulk') {
+
+            // Decide using DB facts, not policy
+            $stats = $rag->getPageVectorStats($page->id);
+
+            $hasVectors = !empty($stats['chunks']);
+
+            $indexedAtTs = 0;
+            if(!empty($stats['indexed_at'])) {
+                $indexedAtTs = strtotime($stats['indexed_at']);
+                if($indexedAtTs === false) $indexedAtTs = 0;
+            }
+
+            // Not indexed at all
+            if(!$hasVectors) {
+                if(!$dryRun) {
+                    try {
+                        $rag->collectPageText($page, $cfg);
+                    } catch(\Throwable $e) {
+                        $out['error'] = $e->getMessage();
+                        $this->wire('log')->save('chatai', "RAG index error, Page id {$page->id}: " . $e->getMessage());
+                        return $out;
+                    }
+                }
+                $out['indexed_new'] = true;
+                return $out;
+            }
+
+            // Already indexed, and unchanged since last index, and no force rebuild
+            if(!$forceRebuild && $indexedAtTs > 0 && (int)$page->modified <= $indexedAtTs) {
+                $out['skipped'] = 'unchanged';
+                return $out;
+            }
+
+            // Otherwise rebuild
+            if(!$dryRun) {
+                try {
+                    $rag->deletePageVectors($page);
+                    $rag->collectPageText($page, $cfg);
+                } catch(\Throwable $e) {
+                    $out['error'] = $e->getMessage();
+                    $this->wire('log')->save('chatai', "RAG rebuild error, Page id {$page->id}: " . $e->getMessage());
+                    return $out;
+                }
+            }
+
+            $out['indexed_replaced'] = true;
+            return $out;
+        }
+
+        // On-save mode: rebuild (delete + collect)
+        if(!$dryRun) {
+            try {
+                $rag->deletePageVectors($page);
+                $rag->collectPageText($page, $cfg);
+            } catch(\Throwable $e) {
+                $out['error'] = $e->getMessage();
+                $this->wire('log')->save('chatai', "RAG upsert error, Page id {$page->id}: " . $e->getMessage());
+                return $out;
+            }
+        }
+
+        $out['indexed_replaced'] = true;
+        return $out;
+    }
+
+    public function deleteLanguageVectors(int $langId): void {
+        $db = $this->wire('database');
+        $stmt = $db->prepare("DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE lang_id=?");
+        $stmt->execute([$langId]);
     }
 
     /* Module functions */
 
+    /* Class getters */
+
+    public function rag(): \ProcessWire\RAG
+    {
+        return $this->rag;
+    }
+
+    public function indexer(): \ProcessWire\ChatAIIndexer
+    {
+        return $this->indexer;
+    }
+
+    public function classifer(): \ProcessWire\Classifier
+    {
+        return $this->classifier;
+    }
+
+    public function logger(): \ProcessWire\ChatAIObsLog
+    {
+        return $this->logger;
+    }
+
+    public function promptService(): \ProcessWire\ChatAIPromptService
+    {
+        return $this->promptService;
+    }
+
     public function renderWidget() : string
     {
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
         $config = wire('config');
         $path = $config->paths->root . ltrim($this->widget, '/');
-        return $chatProcess->getWidget($path);
+        return $this->promptService()->getWidget($path);
     }
 
     public function renderStyles() : string
@@ -220,43 +554,150 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $js;
     }
 
-    public function isMessageAllowed($message) : stdClass
+    /* Update config select field with current OpenAI models */
+
+/*    protected function fetchOpenAIModels(): array
     {
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $session = $this->wire('session');
-        $output = new stdClass();
-        $output->name = $chatProcess->getBotName();
+        $apiKey = trim((string) ($this->api_key ?? ''));
+        if($apiKey === '') return [];
 
-        $blacklisted = $chatProcess->isBlacklisted($message);
-        $output->blacklisted = $blacklisted;
-        // allowed
-        if(!$blacklisted) {
-            $output->reply = $message;
-        } else {
-            // disallowed
-            $blacklistStrikes = $session->getFor('chatai', 'blacklist_strikes') ?? 0;
-            $blacklistStrikes++;
-            $session->setFor('chatai', 'blacklist_strikes', $blacklistStrikes);
+        $http = new WireHttp();
+        $http->setHeaders([
+            'Authorization' => 'Bearer ' . $apiKey,
+        ]);
 
-            if ($blacklistStrikes >= $this->max_strikes) {
-                $session->setFor('chatai', 'blacklist_locked', true);
-                $output->stop = true;
-                $output->error = $this->getErrorMessage(13); // Error message ID 13
-            } else {
-                // Soft warning response (strikes < 3)
-                $output->stop = false;
-                $output->error = $this->getErrorMessage(14,$blacklistStrikes, $this->max_strikes);
-            }
+        $json = $http->get('https://api.openai.com/v1/models');
+        if(!$json) return [];
 
-            // If previously locked out, auto-reject without checking message
-            if ($session->getFor('chatai', 'blacklist_locked')) {
-                $output->stop = true;
-                $output->error = $this->getErrorMessage(13); // Error message ID 13
-            }
+        $data = json_decode($json, true);
+        if(empty($data['data']) || !is_array($data['data'])) return [];
 
+        $models = [];
+
+        foreach($data['data'] as $item) {
+            $id = $item['id'] ?? '';
+            if(!is_string($id) || $id === '') continue;
+
+            // Keep chat-capable GPT models only
+            if(!str_starts_with($id, 'gpt-')) continue;
+            if(str_contains($id, 'realtime')) continue;
+            if(str_contains($id, 'audio')) continue;
+            if(str_contains($id, 'search')) continue;
+            if(str_contains($id, 'transcribe')) continue;
+            if(str_contains($id, 'tts')) continue;
+            if(str_contains($id, 'image')) continue;
+            if(str_contains($id, 'embedding')) continue;
+            if(str_contains($id, 'moderation')) continue;
+
+            $models[$id] = $id;
         }
+
+        ksort($models);
+
+        return $models;
+    }
+
+    public function ___refreshModels(): array
+    {
+        $input = $this->wire('input');
+        if($input->post('refresh_models')) {
+            $models = $this->fetchOpenAIModels();
+            if($models) {
+                $current = $this->model ?? '';
+                if(!$current || !isset($models[$current])) {
+                    $this->model = array_key_first($models);
+                }
+                $this->message($this->_('Available models refreshed from OpenAI.'));
+            } else {
+                $this->warning($this->_('Could not fetch models from OpenAI. Keeping existing model list.'));
+            }
+        }
+        return $models;
+    }*/
+
+    public function isMessageAllowed($message) : \stdClass {
+        $session     = $this->wire('session');
+
+        $output = new \stdClass(); // optional: fully qualify
+        $output->name        = $this->promptService()->getBotName();
+        $output->blacklisted = false;
+        $output->stop        = false;
+        $output->error       = null;
+        $output->reply       = null;
+        $output->html        = null;
+
+        // Optional: resolve lang ID once for logging
+        // so you do not depend on an external $langId variable.
+        $langId = (int) ($this->wire('user')->language->id ?? 0);
+
+        // Check message is not empty. Fallback from HTML check
+        if ($message === '') {
+            $output->error = $this->getErrorMessage(2);
+            return $output;
+        }
+
+        // blacklist check
+        $blacklistTerm = $this->promptService()->isBlacklistTerm($message);
+        if (!$blacklistTerm) {
+            return $output;
+        }
+
+        $strikes = (int) ($session->getFor('chatai', 'blacklist_strikes') ?? 0) + 1;
+        $session->setFor('chatai', 'blacklist_strikes', $strikes);
+
+        if ($strikes && $strikes >= $this->max_strikes) {
+            $output->stop          = true;
+            $output->blacklistTerm = true;
+            $output->blacklisted   = true;
+            $err = $this->getErrorMessage(13);
+
+            // Log hard blacklist event with IP
+            try {
+                $ip = (string) $this->wire('input')->ip;
+
+                $ph = $this->previewAndHash((string) $message);
+
+                $meta = [
+                    'event'            => 'blocked',
+                    'chat_id'          => $this->getCurrentChatId(),
+                    'ip'               => $ip,
+                    'ip_hash'          => hash('sha256', $ip),
+                    'reason'           => 'blacklist',
+                    'lang_id'          => (int) ($langId ?? 0),
+                    'user_msg_preview' => $ph['preview'],
+                    'user_msg_hash'    => $ph['hash'],
+                ];
+
+                $this->obsLog(['ok' => false, 'error' => 'blacklist'], $meta);
+            } catch (\Throwable $e) {
+                $this->wire('log')->save('chatai-obslog', $e->getMessage());
+            }
+
+        } else {
+            $output->stop = false;
+            $err = $this->getErrorMessage(14, $strikes, $this->max_strikes);
+        }
+
+        $output->error = $err;
+        $output->reply = $err->msg;
+
         return $output;
     }
+
+    protected function getCurrentChatId(): string
+    {
+        $session = $this->wire('session');
+
+        $chatId = (string) $session->getFor('chatai', 'chat_id');
+        if (!$chatId) {
+            // Short, opaque id; not user-identifying
+            $chatId = bin2hex(random_bytes(8)); // 16 hex chars
+            $session->setFor('chatai', 'chat_id', $chatId);
+        }
+
+        return $chatId;
+    }
+
 
     private function buildPostData(string $model, array $messages): \stdClass {
         $p = new \stdClass();
@@ -279,13 +720,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 // intentionally DO NOT set: temperature, top_p, presence_penalty, frequency_penalty
                 break;
 
-            // Older models: keep classic sampling parameters
+            // Keep for newer models
             default:
-                if (isset($this->temperature))       $p->temperature = (float) $this->temperature;
-                if (!empty($this->max_completion_tokens)) {
-                    // works with modern chat completions; keep your current field name
-                    $p->max_completion_tokens = (int) $this->max_completion_tokens;
-                }
                 break;
         }
         return $p;
@@ -295,7 +731,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
      * Decide endpoint + normalize body per model family.
      * Returns [string $url, array $body]
      */
-    protected function normalizeApiRequest(string $model, $payload): array {
+    protected function normalizeApiRequest(string $model, $payload): array
+    {
         // deep-cast stdClass → array for [] access
         if (is_object($payload)) $payload = json_decode(json_encode($payload), true);
         $payload = is_array($payload) ? $payload : [];
@@ -306,10 +743,10 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // GPT-5 → Responses API with `input`
             $endpoint = 'https://api.openai.com/v1/responses';
 
-            // Coerce messages into strings
+            // Coerce messages into strings using referenced &$m
             $messages = isset($payload['messages']) && is_array($payload['messages']) ? $payload['messages'] : [];
             foreach ($messages as &$m) {
-                if (!isset($m['role']))    $m['role'] = 'user';
+                if (!isset($m['role'])) $m['role'] = 'user';
                 if (!isset($m['content'])) $m['content'] = '';
                 if (!is_string($m['content'])) {
                     $m['content'] = is_scalar($m['content']) ? (string)$m['content'] : json_encode($m['content']);
@@ -320,13 +757,16 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // Map chat messages → Responses `input`
             $input = [];
             foreach ($messages as $m) {
+                $role = (string)$m['role'];
+                // assistant history must be output_text or refusal
+                $type = ($role === 'assistant') ? 'output_text' : 'input_text';
+                $part = ['type' => $type, 'text' => (string)$m['content']];
                 $input[] = [
-                    'role'    => $m['role'],
-                    'content' => [
-                        ['type' => 'input_text', 'text' => $m['content']]
-                    ],
+                    'role' => $role,          // 'system' | 'user' | 'assistant'
+                    'content' => [$part],
                 ];
             }
+
             $body = [
                 'model' => (string)$model,
                 'input' => $input,
@@ -334,43 +774,19 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
             // tokens/temperature/reasoning mapping stays the same
             if (isset($payload['max_completion_tokens'])) $body['max_output_tokens'] = (int)$payload['max_completion_tokens'];
-            if (isset($payload['temperature']))           $body['temperature']       = (float)$payload['temperature'];
-            if (!empty($payload['reasoning_effort']))     $body['reasoning']         = ['effort' => (string)$payload['reasoning_effort']];
+            //if (isset($payload['temperature'])) $body['temperature'] = (float)$payload['temperature'];
+            if (!empty($payload['reasoning_effort'])) $body['reasoning'] = ['effort' => (string)$payload['reasoning_effort']];
             // drop verbosity (not public)
 
-            return [$endpoint, $body];
+
         }
-
-        // Older/chat models → Chat Completions with `messages`
-        $endpoint = 'https://api.openai.com/v1/chat/completions';
-
-        $messages = isset($payload['messages']) && is_array($payload['messages']) ? $payload['messages'] : [];
-        foreach ($messages as &$m) {
-            if (!isset($m['role']))    $m['role'] = 'user';
-            if (!isset($m['content'])) $m['content'] = '';
-            if (!is_string($m['content'])) {
-                $m['content'] = is_scalar($m['content']) ? (string)$m['content'] : json_encode($m['content']);
-            }
-        }
-        unset($m);
-
-        $body = [
-            'model'    => (string)$model,
-            'messages' => $messages,
-        ];
-        if (isset($payload['max_completion_tokens'])) $body['max_tokens']   = (int)$payload['max_completion_tokens'];
-        if (isset($payload['temperature']))           $body['temperature']  = (float)$payload['temperature'];
-        // strip verbosity/reasoning_effort here
         return [$endpoint, $body];
     }
 
-    /**
-     * Returns (object){ ok: bool, text?: string, error?: string, chat_error?: array }
-     */
     public function callModelForText(array $messagesForApi): \stdClass {
+
         $o = (object)['ok' => false];
 
-        // Build from your builder (as you already do)
         $postData = $this->buildPostData($this->model, $messagesForApi);
         list($url, $body) = $this->normalizeApiRequest($this->model, $postData);
 
@@ -391,60 +807,105 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 return $o;
             }
             $data = json_decode($response, true);
-            $this->obsLog($data);
 
-            // If using /responses, prefer new shapes first
-            if (strpos($url, '/responses') !== false) {
-                // Prefer new Responses API shapes
-                if (!empty($data['output']) && is_array($data['output'])) {
-                    foreach ($data['output'] as $seg) {
-                        if (!empty($seg['content']) && is_array($seg['content'])) {
-                            foreach ($seg['content'] as $c) {
-                                $type = $c['type'] ?? '';
-                                if (!empty($c['text']) && ($type === 'output_text' || $type === 'text')) {
-                                    $o->ok = true; $o->text = (string)$c['text']; return $o;
-                                }
-                            }
-                        }
-                    }
-                }
-                if (!empty($data['output_text']) && is_string($data['output_text'])) {
-                    $o->ok = true; $o->text = (string)$data['output_text']; return $o;
-                }
-
-                // Fallback to mirrored chat shape if present
-                if (!empty($data['choices'][0]['message']['content'])) {
-                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
-                }
-            }
             if (!is_array($data)) {
                 $this->wire('log')->save('chatai', 'OpenAI: unexpected non-JSON response');
                 $o->error = 'unexpected_response';
                 return $o;
             }
 
-            // Success shapes
-            if (strpos($url, '/responses') !== false) {
-                // Prefer Responses API ‘output’ → content → type=output_text
-                if (!empty($data['output']) && is_array($data['output'])) {
-                    foreach ($data['output'] as $seg) {
-                        if (!empty($seg['content']) && is_array($seg['content'])) {
+            $isResponses = (strpos($url, '/responses') !== false);
+
+            // Responses API: detect cutoff early
+            if ($isResponses) {
+                $status = $data['status'] ?? null;
+                $reason = $data['incomplete_details']['reason'] ?? null;
+                $input_tokens = $data['usage']['input_tokens'] ?? 0;
+                $output_tokens = $data['usage']['output_tokens'] ?? 0;
+
+                if ($status === 'incomplete' && $reason === 'max_output_tokens') {
+                    $partial = '';
+
+                    if (!empty($data['output']) && is_array($data['output'])) {
+                        foreach ($data['output'] as $seg) {
+                            if (empty($seg['content']) || !is_array($seg['content'])) continue;
+
                             foreach ($seg['content'] as $c) {
-                                if (($c['type'] ?? '') === 'output_text' && !empty($c['text'])) {
-                                    $o->ok = true; $o->text = (string)$c['text']; return $o;
+                                $type = $c['type'] ?? '';
+                                if ($type !== 'output_text' && $type !== 'text') continue;
+                                if (empty($c['text'])) continue;
+
+                                $text = $c['text'];
+
+                                // Responses text object: ['value' => '...', ...]
+                                if (is_array($text) && isset($text['value'])) {
+                                    $text = $text['value'];
+                                }
+
+                                if (is_string($text) && $text !== '') {
+                                    $partial .= $text;
                                 }
                             }
                         }
                     }
+
+                    $o->ok     = true;
+                    $o->text   = $this->wire('sanitizer')->textarea($partial);
+                    $o->cutoff = true; // flag up to sendMessage()
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
+                    return $o;
                 }
-                // Some providers still mirror chat ‘choices’
+            }
+
+            // Normal success shapes:
+
+            if ($isResponses) {
+                // Modern Responses output → content → type=output_text
+                if (!empty($data['output']) && is_array($data['output'])) {
+                    foreach ($data['output'] as $seg) {
+                        if (empty($seg['content']) || !is_array($seg['content'])) continue;
+
+                        foreach ($seg['content'] as $c) {
+                            $type = $c['type'] ?? '';
+                            if ($type !== 'output_text' && $type !== 'text') continue;
+                            if (empty($c['text'])) continue;
+
+                            $text = $c['text'];
+
+                            // Handle object form: { value: '...', ... }
+                            if (is_array($text) && isset($text['value'])) {
+                                $text = $text['value'];
+                            }
+
+                            if (is_string($text)) {
+                                $o->ok   = true;
+                                $o->text = $text;
+                                $o->input_tokens = $input_tokens;
+                                $o->output_tokens = $output_tokens;
+                                return $o;
+                            }
+                        }
+                    }
+                }
+
+                // Some providers mirror chat-like choices
                 if (!empty($data['choices'][0]['message']['content'])) {
-                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
+                    $o->ok   = true;
+                    $o->text = (string)$data['choices'][0]['message']['content'];
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
+                    return $o;
                 }
+
             } else {
-                // /chat/completions
+                // /chat/completions (generic, no gpt-4 specifics)
                 if (!empty($data['choices'][0]['message']['content'])) {
-                    $o->ok = true; $o->text = (string)$data['choices'][0]['message']['content']; return $o;
+                    $o->ok   = true;
+                    $o->text = (string)$data['choices'][0]['message']['content'];
+                    $o->input_tokens = $input_tokens;
+                    $o->output_tokens = $output_tokens;
+                    return $o;
                 }
             }
 
@@ -455,11 +916,15 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                     $code = 'rate_limit_exceeded';
                 }
                 $this->wire('log')->save('chatai', 'OpenAI error: ' . $code . ' | ' . ($data['error']['message'] ?? ''));
-                $o->error = $code; $o->chat_error = $data['error'];
+                $o->error      = $code;
+                $o->chat_error = $data['error'];
+                $o->input_tokens = $input_tokens;
+                $o->output_tokens = $output_tokens;
+
                 return $o;
             }
 
-            // Unexpected success shape — log a snippet so we can see what came back
+            // Unexpected success shape
             $this->wire('log')->save('chatai', 'OpenAI: missing choices/content | body=' . substr($response, 0, 500));
             $o->error = 'unexpected_response';
             return $o;
@@ -471,10 +936,93 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function sendMessage(string $userMessage, $langId = null, $meta = []): \stdClass
+    protected function isCurrentPageRef(string $msg, ?int $langId, array $cfg): bool
+    {
+        $key = $langId ? "current_page_refs__{$langId}" : "current_page_refs";
+        $list = (string)($cfg[$key] ?? $cfg['current_page_refs'] ?? '');
+        if ($list === '') return false;
+
+        $msg = mb_strtolower(trim($msg));
+
+        foreach (explode(',', $list) as $ref) {
+            $ref = mb_strtolower(trim($ref));
+            if ($ref === '') continue;
+            if (mb_strpos($msg, $ref) !== false) return true;
+        }
+        return false;
+    }
+
+    protected function handleUrlsInPayload(array &$payload): array
+    {
+        $config = $this->wire('config');
+        $pages  = $this->wire('pages');
+
+        $msg = (string) ($payload['msg'] ?? '');
+        $pid = (int) ($payload['pageId'] ?? 0);
+
+        // Allowed hosts (PW convention)
+        $httpHosts = is_array($config->httpHosts)
+            ? $config->httpHosts
+            : [$config->httpHost];
+
+        $allowedHosts = array_values(array_filter(array_map(function ($h) {
+            $h = strtolower(trim((string) $h));
+            return $h !== '' ? $h : null;
+        }, $httpHosts)));
+
+        // Extract URLs
+        if (!preg_match_all('~https?://[^\s<>"\'\)\]]+~i', $msg, $m)) {
+            return ['blocked' => false, 'has_url' => false];
+        }
+
+        $urls = $m[0] ?? [];
+        if (!$urls) return ['blocked' => false, 'has_url' => false];
+
+        $firstOnSiteUrl = null;
+
+        foreach ($urls as $u) {
+            $host = strtolower((string) parse_url($u, PHP_URL_HOST));
+            if ($host !== '' && in_array($host, $allowedHosts, true)) {
+                $firstOnSiteUrl = $u;
+                break; // accept first on-site URL
+            }
+        }
+
+        if (!$firstOnSiteUrl) {
+            // URLs were present, none were on-site
+            return [
+                'blocked' => true,
+                'has_url' => true,
+                'reason'  => 'no_onsite_url',
+            ];
+        }
+
+        // We have at least one on-site URL; optionally resolve to pageId
+        if ($pid < 1) {
+            $p = $pages->get($firstOnSiteUrl);
+            if ($p && $p->id && $p->viewable()) {
+                $payload['pageId'] = (int) $p->id;
+            }
+        }
+
+        return [
+            'blocked' => false,
+            'has_url' => true,
+            'onsite_url' => $firstOnSiteUrl,
+        ];
+    }
+
+
+    public function sendMessage(
+        string $userMessage,
+        ?int $langId = null,
+        ?int $pid = null,
+        ?string $url = null,
+        array $meta = []
+    ): \stdClass
     {
         $san = $this->wire('sanitizer');
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
+        $user = $this->wire('user');
 
         $result = (object)[
             'stop'        => false,
@@ -485,10 +1033,31 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             'name'        => null,
         ];
 
+
+        // Validate / normalise (defensive)
+        $msg = $san->text($userMessage);
+        $langId = $langId !== null ? (int) $san->int($langId) : null;
+        if ($langId < 1) $langId = null;
+        $pid = $pid !== null ? (int) $san->int($pid) : 0;
+        if ($pid < 1) $pid = 0;
+        $url = $url !== null ? (string) $san->url($url) : '';
+
+
+        // Context for CTA hook
+        $payload = [
+            'status'       => 'ok',
+            'openai_error' => null,
+            'msg'          => $msg,
+            'reply'        => null,
+            'error'        => null,
+            'pageId'       => $pid,
+            'langId'       => $langId,
+            'url'          => $url,
+        ];
+
         // Language switch (soft)
         if ($langId !== null) {
             try {
-                $langId = (int)$san->int($langId);
                 $languages = $this->wire('languages');
                 if ($languages && $langId) {
                     $lang = $languages->get($langId);
@@ -496,126 +1065,228 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 }
             } catch (\Throwable $e) { /* ignore */ }
         }
-        if ($chatProcess) $result->name = $chatProcess->getBotName(); // <- use -> not ['']
 
-        // Validate
-        $msg = $san->text($userMessage);
-        if ($msg === '') {
-            $result->error = $this->getErrorMessage(2);
+        $result->name = $this->promptService()->getBotName();
+        $result = $this->isMessageAllowed($msg);
+        $urlCheck = $this->handleUrlsInPayload($payload);
+        if (!empty($urlCheck['blocked'])) {
+            $result->error = $this->getErrorMessage(16);
+            $payload['status']    = 'blocked';
+            $payload['reply'] = $result->error->msg;
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
 
-        // Limit pre-check
-        $count = $this->msgCountGetAndInit();   // should start at 0
-        if ($count >= (int)$this->max_messages) {
+        if($result && $result->error) {
+            // Optional CTA
+            $payload['status'] = 'not_allowed';
+            $payload['error'] = $result->error;
+            $result = $this->handleCTA( $payload,  $result);
+            return $result;
+        }
+
+        $messages = [];
+        $svc = $this->promptService();
+
+        $session = $this->wire('session');
+        $system = $session->getFor('chatai','system_prompt');
+        if (!$system) {
+            $system = ['role'=>'system','content'=>$svc->getPrompt()];
+            $session->setFor('chatai','system_prompt', $system);
+        }
+        $messages[] = ['role'=>'system','content'=> $system];
+
+        // Classify message for context
+        $decision = $this->classifier->classify($msg);
+
+        $cfg = $svc->loadPromptSettings();
+        $userLangId = $user->language->id;
+
+        $cfgLang = function(string $key) use ($cfg, $userLangId) {
+            $k = $key . '__' . $userLangId;
+            return (string)($cfg[$k] ?? $cfg[$key] ?? '');
+        };
+
+        $label   = (string)($decision['label'] ?? '');
+
+        // Quick out if small talk
+        if($label === 'small_talk') {
+            $result->reply = $cfgLang('smalltalk_reply') ?: 'Hello. How can I help you today?';
+            // Optional CTA
+            $payload['status'] = $label;
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
+            return $result;
+        }
+
+        // Quick out if blocked action
+        if($label === 'blocked_action') {
+            $result->reply = $cfgLang('blocked_action_verbs_reply')
+                ?: "I’m sorry. I can’t do that. Please ask me something else about this site.";
+
+            // Optional CTA
+            $payload['status'] = $label;
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
+
+            return $result;
+        }
+
+
+        // RAG path
+        $ragLangId = $langId ?? 0;
+        $k = 6;
+
+
+        // phrase trigger
+        $isCurrentRef = $this->isCurrentPageRef($msg, $langId, $cfg);
+
+        // vague trigger (uses your existing intent label)
+        $preferPageForVague = ($pid > 0 && in_array($label, ['meta', 'ambiguous'], true));
+
+        if ($isCurrentRef || $preferPageForVague) {
+            // Only treat as no_access when the user explicitly refers to "this/current page"
+            if ($isCurrentRef && $pid > 0) {
+                $p = $this->wire('pages')->get((int) $pid);
+                if ($p && $p->id && !$this->rag->shouldIndexPage($p, $cfg)) {
+                    $label = 'no_access';
+                    $top = []; // force canned reply
+                }
+            }
+
+            if (!isset($top)) {
+                $top = $this->rag->retrieveTopKForPage($msg, $ragLangId, $pid, $k, 60, $user);
+            }
+        } else {
+            $top = $this->rag->retrieveTopK($msg, $ragLangId, $k, 60, $user);
+        }
+
+        if(!empty($top)) {
+            $context = $this->rag->buildContextFromChunks($top);
+        } else {
+            switch ($label) {
+                case 'meta':
+                    $result->reply = $cfgLang('meta_reply') ?: $cfgLang('no_context_reply')
+                        ?: 'I can help with pages and information on this site. Ask me what you’re looking for.';
+                    break;
+
+                case 'ambiguous':
+                    // Optional: detect follow-up and prefer followup_reply
+                    if ($follow = $cfgLang('followup_reply')) {
+                        $result->reply = $follow;
+                    } else {
+                        $result->reply = $cfgLang('no_context_reply')
+                            ?: 'Tell me what you’re looking for and I’ll point you to the right page.';
+                    }
+                    break;
+
+                case 'no_access':
+                    $result->reply = $cfgLang('no_access_reply') ?: "I’m sorry, I don’t have access to the page. Please ask me something else about this site.";
+                    break;
+
+            }
+            // Optional CTA
+            $payload['status'] = $label;
+            $payload['replyText'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
+            return $result;
+        }
+
+        // optional: add RAG context as an extra system message if you built it
+        $hist = $session->getFor('chatai','history') ?? [];
+        $hist[] = ['role'=>'user','content'=>$msg];
+        $hist = array_slice($hist, -6); // keep last ~6 entries total
+        $session->setFor('chatai','history', $hist);
+        if (!empty($context)) $messages[] = ['role'=>'system','content'=>"Site context:\n".$context];
+        foreach ($hist as $h) $messages[] = $h;
+
+
+        // User message last
+        $messages[] = ['role' => 'user', 'content' => $msg];
+
+        // Message limit: only applies to OpenAI calls
+        $credit = $this->consumeMessageCredit();
+        if (!empty($credit['blocked'])) {
+            $result->error = $this->getErrorMessage(4); // reached limit
             $result->stop  = true;
-            $result->error = $this->getErrorMessage(4);
+            // Optional CTA
+            $payload['status'] = 'blocked';
+            $payload['error'] = $result->error;
+            $payload['reply'] = $result->reply;
+            $result = $this->handleCTA( $payload,  $result);
             return $result;
         }
-
-        // Blacklist
-        if ($chatProcess->isBlacklisted($msg)) {
-            $result->blacklisted = true;
-            $result->error = (object)['msg' => $this->getErrorMessage(1) ?: 'Message blocked.'];
-            return $result;
-        }
-
-        // Build messages
-        $system = $chatProcess->getPrompt();
-        $messages = [
-            ['role' => 'system', 'content' => $system],
-            ['role' => 'user',   'content' => $msg],
-        ];
 
         // Model call
         try {
-           $started = microtime(true);
+            $started = microtime(true);
 
-            // ... after the API call:
-            $messages = $chatProcess->beforeSend($messages);
+            $messages = $this->beforeSend($messages);
             $m = $this->callModelForText($messages);
-
-            // Normalize to object
-            if (is_string($m)) {
-                $decoded = json_decode($m, false);          // decode as object
-                $m = $decoded ?? (object)[];
-            } elseif (is_array($m)) {
-                $m = (object) $m;
-            } elseif (!is_object($m)) {
-                $m = (object) $m;
-            }
+            $m = $this->normaliseResponse($m);
             $m = $this->afterSend($m);
 
-            // common context
+            // If the low-level wrapper flagged a cutoff, record it on the result
+            if (!empty($m->cutoff)) {
+                $result->cutoff = true;
+                $result->error  = $this->getErrorMessage(20);
+            }
+
+            // Common context
             $ph = $this->previewAndHash((string) $msg);
+            $event = !empty($result->cutoff) ? 'cutoff' : 'reply';
+
             $meta = [
-                'latency_ms' => (int) round((microtime(true) - $started) * 1000),
-                'count'      => (int) $this->msgCountGetAndInit(),
-                'remaining'  => null,     // fill once computed
-                'stop'       => false,    // fill once set
-                'lang_id'    => (int) ($langId ?? 0),   // use your resolved $langId, not $data['lang']
-                'model'      => (string) $this->model,
-                'endpoint'   => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
-                // for privacy, store only a preview + hash, not full text
-                'user_msg'           => $ph['preview'],
-                'user_msg_preview'   => $ph['preview'],
-                'user_msg_hash'      => $ph['hash'],
+                'event'            => $event,
+                'chat_id'          => $this->getCurrentChatId(),
+                'latency_ms'       => (int) round((microtime(true) - $started) * 1000),
+                'count'            => (int) ($credit['count'] ?? 0),
+                'remaining'        => (int) ($credit['remaining'] ?? 0),
+                'max_messages'     => (int) ($credit['max'] ?? 0),
+                'stop'             => false,
+                'lang_id'          => (int) ($userLangId ?? 0),
+                'model'            => (string) $this->model,
+                'endpoint'         => (stripos($this->model, 'gpt-5') === 0 ? '/v1/responses' : '/v1/chat/completions'),
+                'cutoff'           => !empty($result->cutoff),
+                'input_tokens'      => (int) ($m->input_tokens ?? 0),
+                'output_tokens'     => (int) ($m->output_tokens ?? 0),
+                'user_msg_preview' => $ph['preview'],
+                'user_msg_hash'    => $ph['hash'],
             ];
 
-            if (!$m->ok) {
-                $meta['err_code'] = isset($m->error) ? (string)$m->error : 'unknown';
-                $this->obsLog($m, $meta);
-                // ... your existing error mapping & return
+            // Add ok-dependent meta and log once
+            if (empty($m->ok)) {
+                $meta['err_code'] = !empty($m->error) ? (string) $m->error : 'unknown';
             } else {
-                // ... your existing success handling, then:
-                $after     = $this->msgCountInc();
-                $remaining = $this->msgRemaining($after);
-                $result->stop = ($remaining === 0);
+                $meta['stop'] = (bool) $result->stop;
 
-                $meta['remaining']  = $remaining;
-                $meta['stop']       = (bool)$result->stop;
-                $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-                $this->obsLog($m, $meta);
+                $answerSource = $result->html ?? $result->reply ?? $m->text ?? '';
+                $meta['answer_len'] = strlen((string) strip_tags((string) $answerSource));
             }
 
-        } catch (\Throwable $e) {
-            $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
-            $m = (object)['ok' => false, 'error' => 'exception'];
-        }
-
-        // Interpret
-        if (!$m->ok) {
-            $code = !empty($m->error) ? (string)$m->error : 'unknown';
-            // log metrics
             $this->obsLog($m, $meta);
 
-            // Normalize provider “too busy / quota / throttled” signals to case 15
-            if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
-                $result->error = $this->getErrorMessage(15); // object with msg + warning
-                $result->stop  = false;                      // allow retry (your call)
-                return $result;
-            }
+        } catch (\Throwable $e) {
+            // Keep this: it is genuinely useful
+            $this->wire('log')->save('chatai', 'sendMessage model error: ' . $e->getMessage());
 
-            // Everything else → generic failure (case 6)
-            $result->error = $this->getErrorMessage(6);     // object with msg + warning
-            $result->stop  = true;                          // or false, if you want retries
-            return $result;
+            $m = (object) ['ok' => false, 'error' => 'exception'];
+
+            // Ensure meta exists so later code does not see an undefined variable
+            if (!isset($meta) || !is_array($meta)) {
+                $meta = [];
+            }
+            $meta['err_code'] = 'exception';
         }
 
-        // Model returned success in $m->text
-        $after     = $this->msgCountInc();
-        $remaining = $this->msgRemaining($after);
-        $result->stop = ($remaining === 0);
-
-        $meta['remaining']  = $remaining;
-        $meta['stop']       = (bool)$result->stop;
-        $meta['answer_len'] = strlen((string)strip_tags($result->html ?? $result->reply->msg ?? $m->text));
-        $this->obsLog($m, $meta);
+        // Interpret (single exit point)
+        if (empty($m->ok)) {
+            return $this->handleModelError($m, $result, $payload, $meta);
+        }
 
         $raw = (string) $m->text; // expected HTML fragment per your prompt
 
-        // HTML lane — sanitize allowed tags server-side
-        // Build Purifier allowlist from config (HTML Purifier syntax)
+        // Sanitize allowed tags server-side
         $allowed = trim((string)($this['values']['allowed_tags'] ?? 'p,ul,li,ol,strong,em,code,br,a[href]'));
 
         // Ensure anchor allows href if 'a' present without attribute
@@ -633,88 +1304,175 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // Plain-text fallback (for screen readers / no-HTML environments)
         $plain = trim(strip_tags($raw));
-        $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
+       // $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
+        $result->reply = $this->wire('sanitizer')->entities($plain);
 
-        // Increment + warnings
-        $after     = $this->msgCountInc();
-        $remaining = $this->msgRemaining($after);
-        if ($remaining === 0) {
-            $result->stop  = true;
-            $result->error = $this->getErrorMessage(4);   // “Too many questions. Goodbye.”
-        } elseif ($remaining === 1) {
-            $result->error = $this->getErrorMessage(10);  // “One question left…” (warning=true)
+        if ($plain !== '') {
+            $hist[] = ['role'=>'assistant','content'=>$plain];
+            $session->setFor('chatai','history', array_slice($hist, -6));
+        }
+
+
+        $meta['remaining'] = (int) $credit['remaining'];
+        $meta['count']     = (int) ($credit['count'] ?? 0);
+
+        // Use remaining credits to warn/stop (OpenAI-call budget)
+        // Do NOT show the "one left" warning if cutoff already forces a hard stop UX.
+        if (empty($result->cutoff) && isset($credit['remaining']) && (int)$credit['max'] > 0) {
+
+            $remaining = (int) $credit['remaining'];
+
+            if ($remaining === 1) {
+                if (empty($result->stop)) { // only if not already a hard stop
+                    $result->error = $this->getErrorMessage(10);
+                    $result->stop  = false;
+                }
+            } elseif ($remaining === 0) {
+                $result->error = $this->getErrorMessage(4); // or 11
+                $result->stop  = true;
+                $payload['status'] = 'cutoff';
+                $payload['error'] = $result->error;
+            }
+        }
+
+        // Optional CTA
+        $payload['reply'] = $result->reply;
+        $result = $this->handleCTA($payload, $result);
+        return $result;
+    }
+
+
+    protected function handleResponse($ctx, $data) {
+
+    }
+
+    protected function normaliseResponse($m): \stdClass
+    {
+        $type = gettype($m);
+
+        switch ($type) {
+            case 'string':
+                // JSON string response
+                $decoded = json_decode($m, false); // decode as object
+                return $decoded instanceof \stdClass ? $decoded : (object)[];
+
+            case 'array':
+                // Associative array -> object
+                return (object) $m;
+
+            case 'object':
+                // Already what we want
+                return $m instanceof \stdClass ? $m : (object) $m;
+
+            case 'NULL':
+                return (object)[];
+
+            case 'boolean':
+            case 'integer':
+            case 'double':
+                // Unexpected primitive; preserve value for debugging
+                return (object)['value' => $m];
+
+            default:
+                // Resources or anything truly odd
+                return (object)[];
+        }
+    }
+
+
+    protected function handleModelError(\stdClass $m, \stdClass $result, array $payload, array $meta): \stdClass
+    {
+        $code = '';
+        if (!empty($meta['err_code'])) {
+            $code = (string) $meta['err_code'];
+        } elseif (!empty($m->error)) {
+            $code = (string) $m->error;
+        } else {
+            $code = 'unknown';
+        }
+
+        // Normalize provider “too busy / quota / throttled” signals to case 15
+        if (in_array($code, ['rate_limit_exceeded', 'rate_limit', 'insufficient_quota', 'throttled'], true)) {
+            $result->error = $this->getErrorMessage(15); // object with msg + warning
+            $result->stop  = false;
+
+            $payload['status'] = $code;
+            $payload['reply']  = (string) ($result->reply ?? '');
+            $payload['error']  = $result->error;
+
+            return $this->handleCTA($payload, $result);
+        }
+
+        // Everything else → generic failure (case 6)
+        $result->error = $this->getErrorMessage(6); // object with msg + warning
+        $result->stop  = true;
+
+        $payload['status'] = 'failed';
+        $payload['reply']  = (string) ($result->reply ?? '');
+        $payload['error']  = $result->error;
+
+        return $this->handleCTA($payload, $result);
+    }
+
+
+    protected function handleCTA(array $payload, \stdClass $result) {
+        $cta = $this->afterResponse($payload);
+        // if original $payload array returned, hook not used
+        if(is_string($cta)) {
+            $cta = trim((string)$cta);
+            if ($cta !== '') {
+                $result->cta = $cta;
+            }
         }
         return $result;
     }
 
-    /** Example helper stubs  */
-    protected function msgCountGetAndInit(): int {
-        $s = $this->wire('session');
-        $v = $s->getFor('chatai', 'count');
-        if ($v === null) { $s->setFor('chatai', 'count', 0); return 0; }
-        $n = (int)$v; return $n < 0 ? 0 : $n;
+    protected function renderAssistant($ctx, $normalised) {
+
     }
 
-    protected function msgCountInc(): int {
-        $s = $this->wire('session');
-        $n = (int)$s->getFor('chatai', 'count'); $n++;
-        $s->setFor('chatai', 'count', $n);
-        return $n;
-    }
+    /** helper stubs  */
 
-    protected function msgRemaining(int $after): int {
-        return max(0, ((int)$this->max_messages) - $after);
-    }
+    protected function consumeMessageCredit(): array
+    {
+        $session = $this->wire('session');
+        $max = (int) $this->max_messages;
 
-    // logs one compact JSON line
-    protected function obsLog($result, array $meta = []): void {
-        // config + sampling
-        $cfg = $this->wire('modules')->get('ProcessChatAI')->loadPromptSettings();
-        if (empty($cfg['obs_enabled'])) return;
-        $sr = max(1, (int)($cfg['obs_sample_rate'] ?? 1));
-        if (mt_rand(1, $sr) !== 1) return;
+        if ($max <= 0) {
+            return ['blocked' => false, 'max' => 0, 'count' => 0, 'remaining' => 0];
+        }
 
-        // normalize result to array
-        if (is_object($result)) $result = json_decode(json_encode($result), true);
-        $result = is_array($result) ? $result : [];
+        $count = (int) ($session->getFor('chatai', 'count') ?? 0);
 
-        // build payload (prefer your stdClass shape: ok/text/error)
-        $out = [
-            't'          => date('c'),
-            'event'      => 'reply',
-            'ok'         => (bool)($result['ok'] ?? false),
-            'err_code'   => $result['error'] ?? null,
-            'answer_len' => isset($result['text']) ? strlen((string)$result['text']) : null,
+        if ($count >= $max) {
+            return ['blocked' => true, 'max' => $max, 'count' => $count, 'remaining' => 0];
+        }
+
+        $count++;
+        $session->setFor('chatai', 'count', $count);
+
+        return [
+            'blocked'   => false,
+            'max'       => $max,
+            'count'     => $count,
+            'remaining' => max(0, $max - $count),
         ];
+    }
 
-        // merge context (latency, counts, model, endpoint, lang, etc.)
-        foreach ($meta as $k => $v) $out[$k] = $v;
+    public function getObsLog(): \ProcessWire\ChatAIObsLog
+    {
+        return $this->logger;
+    }
 
-        // privacy: hash + preview user_msg if provided
-        if (isset($out['user_msg'])) {
-            $u = (string)$out['user_msg'];
-            $out['user_msg_preview'] = mb_substr($u, 0, 120);
-            $out['user_msg_hash']    = hash('sha256', $u);
-            unset($out['user_msg']);
-        }
 
-        // Write to /site/assets/logs/chatai/chatai_metrics.txt
-        $config = $this->wire('config');
-        $files  = $this->wire('files');
+    // logs one compact event to chatai_obslog
+    protected function obsLog($result, array $meta = []): void
+    {
+        $logger = $this->getObsLog();
+        if (!$logger) return;
 
-        $dir  = $config->paths->logs . 'chatai/';
-        $file = $dir . 'chatai_metrics.txt';
-
-        if (!is_dir($dir)) {
-            // ensures correct perms (uses $config->chmodDir)
-            $files->mkdir($dir, true);
-        }
-
-        // lightweight rotation (optional)
-        if (is_file($file) && filesize($file) > 5 * 1024 * 1024) { // 5 MB
-            @rename($file, $file . '.' . date('Ymd-His'));
-        }
-        file_put_contents($file, json_encode($out, JSON_UNESCAPED_SLASHES) . PHP_EOL, FILE_APPEND | LOCK_EX);
+        // Delegate. ChatAI should not assemble obslog payloads.
+        $logger->logFromResult($result, $meta);
     }
 
     /** @return array{preview:string, hash:string} */
@@ -761,93 +1519,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $this->wire('session')->setFor('chatai', 'transcript', $t);
     }
 
-    /**
-     * Build a plain-text excerpt from content fields only, with safe fallbacks.
-     */
- /*   protected function pageExcerpt(Page $p, string $contentFieldsCsv, int $maxChars = 200): string {
-        $san = $this->wire('sanitizer');
-
-        $fields = array_values(array_filter(array_map('trim', explode('|', $san->text($contentFieldsCsv)))));
-        $chunks = [];
-
-        foreach ($fields as $f) {
-            if ($p->hasField($f) && $p->$f) {
-                $chunks[] = (string) $p->$f;
-            }
-        }
-
-        if (!$chunks) {
-            // fallback: render and clean
-            $rendered = (string) $p->render();
-            if ($rendered !== '') $chunks[] = $rendered;
-        }
-
-        if (!$chunks) return $p->name; // last-resort hint
-
-        // Normalize to readable plain text, then truncate cleanly
-        $text = $san->text(implode("\n\n", $chunks));            // strips tags, normalizes whitespace
-        $text = $san->truncate($text, $maxChars, ['type' => 'chars', 'exact' => false]); // word boundary
-
-        return $text;
-    }*/
-
-    /**
-     * Build a plain-text context list from relevant pages.
-     * - Title always present; URL included as text.
-     * - Excerpt built from content fields only.
-     */
- /*   public function buildTextContextFromPages(
-        PageArray $pages,
-        string $contentFieldsCsv = 'summary|body',
-        int $maxChars = 200
-    ): string {
-        if (!$pages->count > 0) return '';
-
-        $san = $this->wire('sanitizer');
-        $lines = [];
-
-        foreach ($pages as $p) {
-            $title   = $p->get('title|headline|name') ?: 'Untitled';
-            $url     = $p->httpUrl;
-            $excerpt = $this->pageExcerpt($p, $contentFieldsCsv, $maxChars);
-
-            // Normalize to plain text
-            $title   = $san->text($title);
-            $excerpt = $san->text($excerpt);
-
-            $line = "- {$title} ({$url})";
-            if ($excerpt !== '') $line .= " — {$excerpt}";
-            $lines[] = $line;
-        }
-
-        return "Use ONLY the following site context when answering. "
-            . "If it doesn’t address the question, ask the user to rephrase or narrow the topic.\n"
-            . implode("\n", $lines);
-    }*/
-
-/*    private function _getSettings(): stdClass {
-        $db = wire('database'); // WireDatabasePDO (PDO)
-        $table = self::dbTablePrompt;
-
-        try {
-            $stmt = $db->prepare("SELECT json FROM `$table` WHERE id = 1 LIMIT 1");
-            $stmt->execute();
-            $row = $stmt->fetch(\PDO::FETCH_OBJ);
-            if(!$row || !isset($row->json)) {
-                // TODO do not return an empty OBJ. Fill it with the initial defaults
-                return new stdClass();
-            }
-
-            $data = json_decode($row->json );
-            return $data;
-
-        } catch(\Throwable $e) {
-            wire('log').save('chatai', "loadPromptSettingsArray failed: " . $e->getMessage());
-            return new stdclass();
-        }
-    }*/
-
-
     public function getErrorMessage($number, $val1 = null, $val2 = null) {
         $errorMsg = new stdClass();
         switch ($number) {
@@ -887,13 +1558,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 $errorMsg->warning = true;
                 break;
 
-            case 11: // no response (unused)
-                $errorMsg->msg = $this->_('No response');
+            case 11: // last question
+                $errorMsg->msg = $this->_('This chat has reached its limit. Please start a new chat to continue.');
                 break;
 
             case 12: // unexpected API response structure
                 $errorMsg->msg = $this->_('Unexpected API response structure.');
-                break; // <-- add this break
+                break; //
 
             case 13: // lockout due to repeated inappropriate messages
                 $errorMsg->msg = $this->_('You have been locked out due to repeated inappropriate messages.');
@@ -913,6 +1584,15 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             case 15: // rate limited / busy (translatable)
                 $errorMsg->msg = $this->_('We are a bit busy. Please try again shortly.');
                 $errorMsg->warning = true;
+                break;
+
+            case 16: // invalid URL(s) in message
+                $errorMsg->msg = $this->_('I can only help with pages and information on this site. Please use a link from this site, or remove external links and try again.');
+                $errorMsg->warning = true;
+                break;
+
+            case 20: // too few tokens
+                $errorMsg->msg = $this->_('This chat has reached its limit. Please start a new chat to continue.');
                 break;
 
             default:
@@ -954,7 +1634,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
-    public function insertUserMessage(string $conversationUid, string $content, ?string $pageUrl = null, ?string $idempotencyKey = null): array {
+/*    public function insertUserMessage(string $conversationUid, string $content, ?string $pageUrl = null, ?string $idempotencyKey = null): array {
         return $this->withTransaction(function(\WireDatabasePDO $db) use ($conversationUid, $content, $pageUrl, $idempotencyKey) {
 
             // 1) Lock the conversation row to serialize writers for this conversation
@@ -1028,9 +1708,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'seq' => $nextSeq
             ];
         });
-    }
+    }*/
 
-    public function insertAssistantMessage(
+/*    public function insertAssistantMessage(
         string $conversationUid,
         string $content,
         int $promptTokens = 0,
@@ -1087,7 +1767,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 'seq' => $nextSeq
             ];
         });
-    }
+    }*/
 
     private function makeUlid(): string {
         // Replace with a real ULID if you prefer; UUIDv4 here is fine as a drop-in
@@ -1097,7 +1777,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
     }
 
-    private function checkForDuplicateMessages() {
+/*    private function checkForDuplicateMessages() {
         $db = $this->wire('database');
     $sql = <<<SQL
         SELECT conversation_id, seq, COUNT(*) AS c
@@ -1113,9 +1793,10 @@ SQL;
             wire('log')->save('errors', "Problem checking for dupicate ChatAI messages. " . $e->getMessage());
         }
 
-    }
+    }*/
 
-    /* Hookable Methods */
+    /** Hookable Methods **/
+
     /** Hook: mutate outbound request before sending to the model. */
     /** @param array $messages */
     public function ___beforeSend(array $messages): array { return $messages; }
@@ -1126,93 +1807,35 @@ SQL;
         return $rawResponse; // no-op by default
     }
 
-    /** Hook: optional contextual CTA HTML fragment (or null). */
-    /** @param array $ctx */
-    public function ___composeCTA(array $ctaCtx): ?string { return null; }
-
     /** Hook: last-mile payload tweak before returning JSON to the widget. */
     /** @param array $payload */
-    public function ___afterResponse(array $payload): array { return $payload; }
-
-    /** Helper: sites can override booking page detection via hook. */
-    protected function ___isBookingPage(string $url): bool {
-        return false;
+    public function ___afterResponse(array $payload): array {
+        return $payload;
     }
 
-    /** Hook helper for chatai-api.php */
-
-    /**
-     * Decorate an API result once: optional CTA, sanitize, and run afterResponse.
-     * Keeps your sendMessage() contract intact.
-     *
-     * @param object|array $result  The object/array returned by sendMessage()
-     * @param array        $params  ['ln'=>int|null,'page_url'=>string,'intent'=>string]
-     * @return object|array
-     */
-    public function finalizeApiResult(object|array $result, array $params = []): object|array {
-        $wasArray = is_array($result);
-        if ($wasArray) $result = (object)$result;
-
-        $pageUrl = (string)($params['page_url'] ?? '');
-        $langId  = (int)($params['ln'] ?? $params['lang_id'] ?? 0);
-        $intent  = (string)($params['intent'] ?? 'general');
-        $turn    = (int)($this->wire('session')->getFor('chatai', 'turn') ?? 1);
-        $hasError = !empty($result->error);
-
-        // Add CTA only for non-error and outside booking pages
-        if (!$hasError && !$this->isBookingPage($pageUrl)) {
-            $ctx = [
-                'intent'        => $intent,
-                'pageUrl'       => $pageUrl,
-                'lang_id'       => $langId,
-                'turn'          => $turn,
-                'isBookingPage' => $this->isBookingPage($pageUrl),
-            ];
-            if ($cta = $this->composeCTA($ctx)) {
-                if (!isset($result->extras) || !is_object($result->extras)) {
-                    $result->extras = new \stdClass();
-                }
-                $result->extras->cta_html = $this->purify($cta);
-            }
-        }
-
-        // Sanitize main reply if present
-        if (isset($result->reply) && is_string($result->reply)) {
-            $result->reply = $this->purify($result->reply);
-        }
-
-        // Last-mile hook: stay compatible if afterResponse expects array
-        $hookIn  = (array)$result;
-        $hookOut = $this->afterResponse($hookIn); // site can be a no-op
-        $result  = is_array($hookOut) ? (object)$hookOut : $hookOut;
-
-        return $wasArray ? (array)$result : $result;
+    public function ___isEligibleForChat(Page $page): bool
+    {
+        // Default: do not change existing behaviour.
+        // Developers can hook this to return false based on field values.
+        return true;
     }
 
-    /** Keep markup to your allowed tags; route through your site purifier/sanitizer if available. */
-    protected function purify(string $html): string {
-        $san = $this->wire('sanitizer');
-        return method_exists($san, 'purify') ? $san->purify($html) : $html;
-    }
-
-
-    /* Determine if page eligible for indexing and rag */
-    protected function asmToIds($val): array {
-        if ($val instanceof \ProcessWire\WireArray) $val = $val->getArray();
-        if (!is_array($val)) return [];
-        return array_values(array_unique(array_map('intval', $val)));
-    }
 
     public function validTemplate(Page $p, array $cfg): bool {
-        if (!$p->id || !$p->isPublic()) return false;
-       
-        $inclIds = $this->asmToIds($cfg['rag_candidate_templates'] ?? []);
-        $exclIds = $this->asmToIds($cfg['rag_exclude_templates'] ?? []);
+        if(!$p->id) return false;
+        if(!$p->template) return false;
+
+        $inclIds = $cfg['rag_candidate_templates'] ?? [];
+        $exclIds = $cfg['rag_exclude_templates'] ?? [];
 
         $tplId = (int) $p->template->id;
-        if (!empty($exclIds) && in_array($tplId, $exclIds)) return false;
-        if (!empty($inclIds) && !in_array($tplId, $inclIds)) return false;
-        if ($p->hasField('chatai_exclude') && $p->chatai_exclude) return false;
+
+        if(!empty($exclIds) && in_array($tplId, $exclIds, true)) return false;
+        if(!empty($inclIds) && !in_array($tplId, $inclIds, true)) return false;
+
+        // Optional per-page exclusion
+        if($p->hasField('chatai_exclude') && (int) $p->get('chatai_exclude') === 1) return false;
+
         return true;
     }
 
@@ -1221,187 +1844,64 @@ SQL;
 
     private static function _createDBTables() {
         $db = wire('database');
-        // 1. Create tables
+
         $sql = <<<SQL
 
-        -- Prompt table
-        CREATE TABLE IF NOT EXISTS chatai_prompt (
-          id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
-          json LONGTEXT NOT NULL,
-          created DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
+    -- Config / prompt JSON (used for \$cfg)
+    CREATE TABLE IF NOT EXISTS chatai_prompt (
+      id TINYINT UNSIGNED NOT NULL PRIMARY KEY DEFAULT 1,
+      json LONGTEXT NOT NULL,
+      created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      modified TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_520_ci;
 
-        --  Conversations
-        DROP TABLE IF EXISTS chatai_conversations;
-        CREATE TABLE chatai_conversations (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_uid CHAR(26) NOT NULL,                
-          anonymous_id CHAR(36) NULL,
-          user_id INT(11) UNSIGNED NULL,                    
-          session_id VARCHAR(128) NULL,
-          status ENUM('active','archived','blocked','error','closed') NOT NULL DEFAULT 'active',
-          started_at DATETIME NOT NULL,
-          last_activity_at DATETIME NOT NULL,
-          closed_at DATETIME NULL,
-          page_url_start TEXT NULL,
-          page_template_start VARCHAR(128) NULL,
-          title VARCHAR(255) NULL,
-          model VARCHAR(128) NULL,
-          message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          user_message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          assistant_message_count INT UNSIGNED NOT NULL DEFAULT 0,
-          input_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          output_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          cost_estimate_cents INT UNSIGNED NOT NULL DEFAULT 0,
-          properties JSON NULL,
-          ip_hash VARBINARY(32) NULL,                       
-          user_agent VARCHAR(255) NULL,
+    -- Obs log: simple event logger for dashboard and stats
+    CREATE TABLE IF NOT EXISTS chatai_obslog (
+      id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+      chat_id VARCHAR(64) NOT NULL DEFAULT '',
+      event_type VARCHAR(32) NOT NULL DEFAULT '',
+      status VARCHAR(32) NOT NULL DEFAULT '',
+      model VARCHAR(64) NOT NULL DEFAULT '',
+      meta MEDIUMTEXT NULL,
+      created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY ix_created (created),
+      KEY ix_chat (chat_id),
+      KEY ix_event (event_type)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4
+      COLLATE=utf8mb4_unicode_520_ci;
 
-          PRIMARY KEY (id),
-          UNIQUE KEY ux_conversation_uid (conversation_uid),
-          KEY ix_anonymous_id (anonymous_id),
-          KEY ix_user_id (user_id),
-          KEY ix_status_last (status, last_activity_at),
-          KEY ix_started (started_at),
-          KEY ix_template (page_template_start)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        -- Messages
-        DROP TABLE IF EXISTS chatai_messages;
-        CREATE TABLE chatai_messages (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_id BIGINT UNSIGNED NOT NULL,
-          message_uid CHAR(26) NOT NULL,                      
-          seq INT UNSIGNED NOT NULL,                          
-          role ENUM('system','user','assistant','tool') NOT NULL,
-          content MEDIUMTEXT NOT NULL,
-          raw_payload MEDIUMTEXT NULL,
-          tool_name VARCHAR(128) NULL,
-          tool_arguments JSON NULL,
-          attachment_refs JSON NULL,
-          prompt_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          completion_tokens INT UNSIGNED NOT NULL DEFAULT 0,
-          finish_reason VARCHAR(64) NULL,
-          created_at DATETIME NOT NULL,
-          idempotency_key VARCHAR(64) NULL,
-          page_url TEXT NULL,
-          flags JSON NULL,
-
-        PRIMARY KEY (id),
-        UNIQUE KEY ux_message_uid (message_uid),
-        UNIQUE KEY ux_conv_seq (conversation_id, seq),
-        UNIQUE KEY ux_conv_idemp (conversation_id, idempotency_key),
-        KEY ix_conv_idemp (conversation_id, idempotency_key),
-        KEY ix_conv_created (conversation_id, created_at),        
-        CONSTRAINT fk_msg_conv
-          FOREIGN KEY (conversation_id) REFERENCES chatai_conversations(id)
-          ON DELETE CASCADE
-          ON UPDATE RESTRICT                                     
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        -- Events
-        DROP TABLE IF EXISTS chatai_events;
-        CREATE TABLE chatai_events (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          conversation_id BIGINT UNSIGNED NOT NULL,
-          event_time DATETIME NOT NULL,
-          event_type VARCHAR(64) NOT NULL,                    
-          event_data JSON NULL,
-          page_url TEXT NULL,
-        
-          PRIMARY KEY (id),
-          KEY ix_conv_time (conversation_id, event_time),
-          KEY ix_type_time (event_type, event_time),
-          CONSTRAINT fk_evt_conv
-            FOREIGN KEY (conversation_id) REFERENCES chatai_conversations(id)
-            ON DELETE CASCADE
-            ON UPDATE RESTRICT
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-
-        --  Blocks 
-        DROP TABLE IF EXISTS chatai_blocks;
-        CREATE TABLE chatai_blocks (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          created_at DATETIME NOT NULL,
-          anonymous_id CHAR(36) NULL,
-          user_id INT(11) UNSIGNED NULL,                      
-          ip_hash VARBINARY(32) NULL,
-          reason VARCHAR(255) NOT NULL,
-          details JSON NULL,
-        
-          PRIMARY KEY (id),
-          KEY ix_anonymous (anonymous_id),
-          KEY ix_user (user_id),
-          KEY ix_created (created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
-        
-        -- Vectors
-        DROP TABLE IF EXISTS chatai_vec_chunks;
-        CREATE TABLE chatai_vec_chunks (
-          `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          `page_id` INT UNSIGNED NOT NULL,
-          `lang_id` VARCHAR(16) NOT NULL DEFAULT '0',
-          `chunk_index` INT UNSIGNED NOT NULL,
-          `source_url` TEXT NULL,
-          `title` VARCHAR(255) NULL,
-          `headings` MEDIUMTEXT NULL,
-          `slug` VARCHAR(255) NULL,
-          `text` MEDIUMTEXT NOT NULL,
-          `embedding_csv` LONGTEXT NOT NULL,
-          `created_at` DATETIME NOT NULL,
-          `updated_at` DATETIME NOT NULL,
-          PRIMARY KEY (`id`),
-          KEY `ix_page_lang` (`page_id`, `lang_id`),
-          FULLTEXT KEY `ft_text` (`text`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
+    -- Vectors: RAG chunks (can be regenerated)
+    DROP TABLE IF EXISTS chatai_vec_chunks;
+    CREATE TABLE chatai_vec_chunks (
+     id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+     page_id INT UNSIGNED NOT NULL,
+     lang_id VARCHAR(16) NOT NULL DEFAULT '0',
+     chunk_index INT UNSIGNED NOT NULL,
+     source_url TEXT NULL,
+     title VARCHAR(255) NULL,
+     headings MEDIUMTEXT NULL,
+     slug VARCHAR(255) NULL,
+     text MEDIUMTEXT NOT NULL,
+     embedding_csv LONGTEXT NOT NULL,
+     created TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     indexed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+     PRIMARY KEY (id),
+     KEY ix_page_lang (page_id, lang_id),
+     KEY ix_page_indexed_at (page_id, indexed_at),
+     FULLTEXT KEY ft_text (text)
+    ) ENGINE=InnoDB
+      DEFAULT CHARSET=utf8mb4;
 SQL;
 
         try {
             $db->query($sql);
-        } catch(\WireException $e) {
+        } catch(\Throwable $e) {
             wire('log')->save('errors', 'Failed to create ChatAI tables. ' . $e->getMessage());
         }
-
-        // 2) Trigger (separate call, no DELIMITER)
-        $trigger = <<<SQL
-            DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins;
-            CREATE TRIGGER chatai_messages_seq_before_ins
-            BEFORE INSERT ON chatai_messages
-            FOR EACH ROW
-            BEGIN
-              IF NEW.seq IS NULL OR NEW.seq = 0 THEN
-                SET NEW.seq = (
-                  SELECT COALESCE(MAX(m.seq), 0)
-                  FROM chatai_messages m
-                  WHERE m.conversation_id = NEW.conversation_id
-                ) + 1;
-              END IF;
-            END
-            SQL;
-        try {
-            // exec() can only run a single statement, so send them one by one
-            $db->exec('DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins');
-            $db->exec(
-                "CREATE TRIGGER chatai_messages_seq_before_ins
-             BEFORE INSERT ON chatai_messages
-             FOR EACH ROW
-             BEGIN
-               IF NEW.seq IS NULL OR NEW.seq = 0 THEN
-                 SET NEW.seq = (
-                   SELECT COALESCE(MAX(m.seq), 0)
-                   FROM chatai_messages m
-                   WHERE m.conversation_id = NEW.conversation_id
-                 ) + 1;
-               END IF;
-             END"
-            );
-        } catch (\Throwable $e) {
-            wire('log')->save('errors', 'Trigger create failed. Falling back to PHP-assigned seq. ' . $e->getMessage());
-            // Optional: mark a setting so PHP assigns seq instead of relying on the trigger
-        }
-
     }
 
     private static function _createTemplate() {
@@ -1460,12 +1960,27 @@ SQL;
             $apiPage->save();
         }
 
+        if(!$files->exists($config->paths->templates . 'chatai-rag.php')) {
+            $copyFrom = $modules->siteModulesPath . self::modName . '/classes/RAG/chatai-rag.php';
+            $copyTo = $config->paths->templates . 'chatai-rag.php';
+            $files->copy($copyFrom, $copyTo);
+        }
+
     }
 
     public function ___install() : void
     {
         self::_createDBTables();
         self::_createTemplate();
+
+        $permissions = $this->wire()->permissions;
+        if (!$permissions->get('chatai')) {
+            $p = new Permission();
+            $p->name = 'chatai';
+            $p->title = 'ChatAI administration';
+            $permissions->add($p);
+        }
+
     }
 
     public function ___uninstall()
@@ -1475,16 +1990,9 @@ SQL;
         $templates = wire('templates');
 
         $sql = <<<SQL
-        -- Drop the trigger first (must happen before dropping chatai_messages)
-        DROP TRIGGER IF EXISTS chatai_messages_seq_before_ins;
-        
         -- Drop the tables in dependency order (children first)
-        DROP TABLE IF EXISTS chatai_blocks;
-        DROP TABLE IF EXISTS chatai_events;
-        DROP TABLE IF EXISTS chatai_messages;
-        DROP TABLE IF EXISTS chatai_conversations;
-        DROP TABLE IF EXISTS chatai;
         DROP TABLE IF EXISTS chatai_prompt;
+        DROP TABLE IF EXISTS chatai_obslog;
         DROP TABLE IF EXISTS chatai_vec_chunks;
 SQL;
 
@@ -1502,5 +2010,7 @@ SQL;
         if($apiTemplate)
             $templates->delete($apiTemplate);
 
+        // clear anything in the cache
+        $this->wire('cache')->deleteFor('chatai');
     }
 }

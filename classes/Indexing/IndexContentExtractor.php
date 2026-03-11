@@ -6,6 +6,17 @@
  * No template changes required.
  */
 
+/*TinyHtmlMinifier is still required in IndexContentExtractor for reliable
+  DOM/heading extraction.
+  Without it, text chunks may still be generated, and headings from repeater-rendered
+  content can be missed.
+*/
+
+/* TODO
+   Investigate why heading extraction from repeater-rendered content depends
+   on TinyHtmlMinifier; determine whether the root issue is malformed rendered HTML,
+   DOM parsing fragility, or heading extraction logic.
+*/
 require_once (__DIR__ . '/tiny-html-minifier/src/TinyHtmlMinifier.php');
 
 class IndexContentExtractor extends Wire
@@ -108,8 +119,9 @@ class IndexContentExtractor extends Wire
     {
         $cfg = $this->wire('cache')->getFor('chatai', 'promptSettings');
         if(!$cfg) {
-            $m = $this->wire('modules')->get('ProcessChatAI');
-            $cfg = $m->loadPromptSettings();
+            $m = $this->wire('modules')->get('ChatAI');
+            $svc = $m->promptService();
+            $cfg = $svc->loadPromptSettings();
         }
 
         $raw = (string)($cfg['rag_candidate_selectors'] ?? "article, [role='main'], .content, .page-content, .entry-content, .post-content, #content");
@@ -120,13 +132,12 @@ class IndexContentExtractor extends Wire
     {
         $cfg = $this->wire('cache')->getFor('chatai', 'promptSettings');
         if(!$cfg) {
-            $m = $this->wire('modules')->get('ProcessChatAI');
-            $cfg = $m->loadPromptSettings();
+            $m = $this->wire('modules')->get('ChatAI');
+            $svc = $m->promptService();
+            $cfg = $svc->loadPromptSettings();
         }
 
         $raw = (string)($cfg['rag_exclude_selectors'] ?? "header, footer, nav, aside, form[role='search'], [role='banner'], [role='navigation'], [role='contentinfo'], .sidebar, .breadcrumbs, .menu, .mega-menu, .toolbar, .cookie, .consent, .newsletter, .promo, .ad, .related, .share, .social, #header, #footer");
-
-        bd($raw, 'exclude');
         return $this->splitCsv($raw);
     }
 

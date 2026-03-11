@@ -16,55 +16,56 @@ class ChatAIIndexer extends Wire
     public function buildForPage(Page $page, int $langId): array
     {
         $files = $this->wire('files');
-        $cfg   = $this->wire('modules')->get('ProcessChatAI')->loadPromptSettings();
+        $config = $this->wire('config');
 
-        $ragViewPath =  $this->wire('config')->paths('ChatAI') . 'classes/RAG/';
-        $view  = !empty($cfg['rag_view']) ? $cfg['rag_view'] :  $ragViewPath . 'chatai-rag.php';
+        if($files->exists($config->paths->templates . 'chatai-rag.php')) {
+            $html = $files->render('chatai-rag.php', ['page' => $page]);
+        } else {
+            $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
+            $view =  $ragViewPath . 'chatai-rag.php';
+            $html = $files->render($view, ['page' => $page], ['allowedPaths', [$ragViewPath]]);
+        }
 
+        $tt = new WireTextTools();
         $content = [];
-        $html = $files->render($view, ['page' => $page], ['allowedPaths', $ragViewPath]);
-        $content['text'] = $this->wire('modules')->get('ChatAI')->rag->toPlainText($html);
+        $content['text'] = $tt->markupToText($html);
         $content['heads'] = $this->getPageHeadings($page, $langId);
         $content['slug']  = $page->name;
 
         return $content;
     }
 
-
     /* ------------------------------ helpers ------------------------------ */
 
-
-    /** Return current index_version from ProcessChatAI prompt settings (defaults to 1) */
+    /** Return current index_version from prompt settings (defaults to 1) */
     public function getIndexVersion(): int
     {
         // @var \ProcessWire\ProcessChatAI $proc
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        if (!$chatProcess || !method_exists($chatProcess, 'loadPromptSettings')) return 1;
+        $chatai = $this->wire('modules')->get('ChatAI');
+        if (!$chatai || !method_exists($chatai, 'promptService')) return 1;
 
-        $cfg = (array) $chatProcess->loadPromptSettings();
+        $cfg = (array) $chatai->promptService()->loadPromptSettings();
         return (int) ($cfg['index_version'] ?? 1);
     }
 
     /** Increase index_version inside ProcessChatAI prompt settings (busts caches) */
     public function bumpIndexVersion(): int
     {
-        // @var \ProcessWire\ProcessChatAI $proc
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        if (!$chatProcess || !method_exists($chatProcess, 'loadPromptSettings') || !method_exists($chatProcess, 'savePromptSettingsJson')) {
-            $this->wire('log')->save('chatai', 'bumpIndexVersion: ProcessChatAI methods unavailable');
-            return 1;
-        }
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $svc = $chatai ? $chatai->promptService() : null;
+        if(!$svc) return 1;
 
-        $cfg  = (array) $chatProcess->loadPromptSettings();
-        $next = (int) ($cfg['index_version'] ?? 1) + 1;
+        $cfg = (array) $svc->loadPromptSettings();
+        $old = (int) ($cfg['index_version'] ?? 1);
+        $next = $old + 1;
         $cfg['index_version'] = $next;
 
-        $json = json_encode($cfg, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-        if ($json === false) {
-            $this->wire('log')->save('chatai', 'bumpIndexVersion: json_encode failed');
-            return $next;
+        if(!$svc->savePromptSettings($cfg)) {
+            $this->wire('log')->save('chatai', 'bumpIndexVersion: savePromptSettings failed');
+            return $old;
         }
 
+        $this->wire('cache')->deleteFor('chatai', "dict:v{$old}:all");
         return $next;
     }
 }

@@ -39,8 +39,8 @@ You can install it with Composer as well.
 
 ```php
 <?php
-use ProcessWire\tinyrequire 'tiny-html-minifier.php';
-echo ProcessWire\tiny-html-minifier\src\TinyMinify::html($html);
+require 'tiny-html-minifier.php';
+echo TinyMinify::html($html);
 ```
 
 ## Before / after
@@ -102,8 +102,8 @@ echo ProcessWire\tiny-html-minifier\src\TinyMinify::html($html);
 
 ```php
 <?php
-use ProcessWire\tinyrequire 'tiny-html-minifier.php';
-echo ProcessWire\tiny-html-minifier\src\TinyMinify::html($html, $options = [
+require 'tiny-html-minifier.php';
+echo TinyMinify::html($html, $options = [
     'collapse_whitespace' => false,
     'disable_comments' => false,
 ]);

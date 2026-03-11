@@ -45,4 +45,14 @@ $wire->addHookAfter('ProcessChatAI::composeCTA', function(HookEvent $e) {
     $label = ($ctx['lang_id'] === 2) ? 'Reservar turno en línea' : 'Book an appointment online';
     $session->set('ctaShown', true);
     $e->return = "<p><a href='/book' target='_blank' rel='noopener'>${label} (opens in a new tab)</a></p>";
-});
+} 
+```
+---
+## License
+
+This module is released under the MIT License.
+
+It integrates with third-party AI services, and all AI-generated output is provided “as is”.  
+Use of this module and any generated content is entirely at your own risk.
+
+See LICENSE.md for full terms.

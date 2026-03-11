@@ -1,11 +1,9 @@
 <?php
 
 // TODO: use namespace:
-// use Minifier\ProcessWire\tiny-html-minifier\src\TinyMinify;
+// use Minifier\TinyMinify;
 
-use ProcessWire\tinyrequire;
-
-'../src/TinyMinify.php';
+require '../src/TinyMinify.php';
 
 $html = file_get_contents(__DIR__ . '/tests.html');
 

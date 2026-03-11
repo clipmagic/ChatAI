@@ -21,18 +21,37 @@ class Classifier extends Wire
     protected array $cfgMemo = [];
     public function getCfg(): array {
         if (!empty($this->cfgMemo)) return $this->cfgMemo;
-        $chatProcess = $this->wire('modules')->get('ProcessChatAI');
-        $cfg = $chatProcess ? (array) $chatProcess->loadPromptSettings() : [];
+        $chatai = $this->wire('modules')->get('ChatAI');
+        $svc = $chatai ? $chatai->promptService() : null;
+        $cfg = $svc ? (array) $svc->loadPromptSettings() : [];
         $this->cfgMemo = $cfg;
         return $this->cfgMemo;
     }
+
+
+    public static function dictionaryPrefixes(): array
+    {
+        // These are the *prefixes* used by buildDictionary() via collectLangStrings($cfg, $prefix)
+        return [
+            'smalltalk_triggers',
+            'meta_terms',
+            'stop_terms_hard',
+            'stop_terms_soft',
+            'custom_terms',
+            'question_words',
+            'action_verbs',
+            'followup_terms',
+        ];
+    }
+
+
+
     /**
      * Build or load the domain dictionary for a language.
      * Returns ['term' => weight, ...]
      */
     public function buildDictionary(): array {
         $cfg   = $this->getCfg();
-        // \ProcessWire\WireCache $cache
         $cache = $this->wire('cache');
 
         $ver = (int)($cfg['index_version'] ?? 1);
@@ -42,14 +61,16 @@ class Classifier extends Wire
         if (is_array($dict) && ($dict['version'] ?? 0) === $ver) return $dict;
 
         // build from cfg (union across languages via suffixed keys)
-        $smalltalk = $this->normMany($this->collectLangStrings($cfg, 'smalltalk_triggers'));
-        $meta      = $this->normMany($this->collectLangStrings($cfg, 'meta_terms'));
-        $stopHard  = $this->normMany($this->collectLangStrings($cfg, 'stop_terms_hard'));
-        $stopSoft  = $this->normMany($this->collectLangStrings($cfg, 'stop_terms_soft'));
-        $custom    = $this->normMany($this->collectLangStrings($cfg, 'custom_terms'));
-        $question  = $this->normMany($this->collectLangStrings($cfg, 'question_words'));
-        $action    = $this->normMany($this->collectLangStrings($cfg, 'action_verbs'));
-        $followup  = $this->normMany($this->collectLangStrings($cfg, 'followup_terms'));
+        $smalltalk   = $this->normMany($this->collectLangStrings($cfg, 'smalltalk_triggers'));
+        $meta        = $this->normMany($this->collectLangStrings($cfg, 'meta_terms'));
+        $stopHard    = $this->normMany($this->collectLangStrings($cfg, 'stop_terms_hard'));
+        $stopSoft    = $this->normMany($this->collectLangStrings($cfg, 'stop_terms_soft'));
+        $custom      = $this->normMany($this->collectLangStrings($cfg, 'custom_terms'));
+        $question    = $this->normMany($this->collectLangStrings($cfg, 'question_words'));
+        $followup    = $this->normMany($this->collectLangStrings($cfg, 'followup_terms'));
+        $infoActs    = $this->normMany($this->collectLangStrings($cfg, 'info_action_verbs'));
+        $blockedActs = $this->normMany($this->collectLangStrings($cfg, 'blocked_action_verbs'));
+
 
         $set = fn(array $arr) => array_fill_keys($arr, true);
 
@@ -61,8 +82,9 @@ class Classifier extends Wire
             'stop_soft_set'      => $set($stopSoft),
             'custom_terms_set'   => $set($custom),
             'question_words_set' => $set($question),
-            'action_verbs_set'   => $set($action),
             'followup_terms_set' => $set($followup),
+            'info_action_verbs_set'   => $set($infoActs),
+            'blocked_action_verbs_set'=> $set($blockedActs),
         ];
 
         $cache->saveFor('chatai', $key, $dict, 3600);
@@ -87,7 +109,11 @@ class Classifier extends Wire
 
         if ($this->isMeta($t, $dict))      return ['label' => 'meta',       'use_rag' => false];
         if ($this->isGreeting($t, $dict))  return ['label' => 'small_talk', 'use_rag' => false];
-        if ($this->isAction($t, $dict))    return ['label' => 'action',     'use_rag' => false];
+        // Blocked actions first (prevents "change/delete/update" getting into RAG)
+        if ($this->isBlockedAction($t, $dict)) return ['label' => 'blocked_action', 'use_rag' => false];
+
+        // Info-actions should use RAG (summarise/list/show/translate/etc.)
+        if ($this->isInfoAction($t, $dict))    return ['label' => 'info_query', 'use_rag' => true];
 
         $sectionish = $this->hasPageSectionWord($t, $dict);
         $domainHit  = $this->hitsAny($t, $dict['custom_terms_set'] ?? []);
@@ -95,7 +121,9 @@ class Classifier extends Wire
             return ['label' => 'info_query', 'use_rag' => true];
         }
 
-        if ($this->looksLikeFollowup($t, $dict)) {
+        // Treat as follow-up only when it's short and referential.
+        // Prevents full requests like "tell me about flowers" from being misrouted.
+        if ($this->looksLikeFollowup($t, $dict) && $this->wordCount($t) <= 2) {
             return ['label' => 'ambiguous', 'use_rag' => false];
         }
 
@@ -104,6 +132,14 @@ class Classifier extends Wire
 
 
     // --- Helpers: config → lists -------------------------------------------------
+
+    protected function wordCount(string $t): int {
+        $t = trim($t);
+        if ($t === '') return 0;
+        return count(preg_split('~\s+~u', $t, -1, PREG_SPLIT_NO_EMPTY));
+    }
+
+
 
     // collect base + key__{langId} strings then return array of strings
     protected function collectLangStrings(array $cfg, string $baseKey): array {
@@ -154,11 +190,13 @@ class Classifier extends Wire
         }
         return false;
     }
-    protected function isAction(string $t, array $dict): bool {
-        foreach ($dict['action_verbs_set'] as $v => $_) {
-            if (preg_match('~^(?:please\s+)?' . preg_quote($v, '~') . '\b~ui', $t)) return true;
-        }
-        return false;
+
+    protected function isBlockedAction(string $t, array $dict): bool {
+        return $this->hitsAny($t, $dict['blocked_action_verbs_set'] ?? []);
+    }
+
+    protected function isInfoAction(string $t, array $dict): bool {
+        return $this->hitsAny($t, $dict['info_action_verbs_set'] ?? []);
     }
 
 
@@ -175,266 +213,9 @@ class Classifier extends Wire
         return false;
     }
 
+    protected function noAccess(string $t, array $set): bool {
 
-
-    protected function pack(string $label, bool $useRag, float $conf, array $hits): array
-    {
-        return [
-            'label' => $label,
-            'use_rag' => $useRag,
-            'confidence' => max(0.0, min(1.0, $conf)),
-            'matched_terms' => array_values(array_unique($hits)),
-        ];
+        return false;
     }
 
-    protected function decide(float $conf, array $hits): array
-    {
-        if ($conf >= 0.50)  return $this->pack('info_query', true,  $conf, $hits);
-        if ($conf >= 0.30)  return $this->pack('ambiguous',  false, $conf, $hits);
-        return $this->pack('small_talk', false, $conf, $hits);
-    }
-
-    protected function confidence(string $t, float $score, array $hits, array $extras = []): float
-    {
-        // Base: compress score ~0..3 into 0..1
-        $base = max(0.0, min(1.0, $score / 3.0));
-
-        $bump = 0.0;
-        if ($this->hasQuestionWord($t))  $bump += 0.20;
-        if ($this->hasPageSectionWord($t)) $bump += 0.20;
-        if ($this->isGreeting($t))       $bump -= 0.30;
-        if ($this->isMeta($t))           $bump -= 0.30;
-
-        foreach ($extras as $k => $v) $bump += (float)$v;
-
-        $conf = $base + $bump;
-        return max(0.0, min(1.0, $conf));
-    }
-
-    protected function matchScore(string $t, array $dict): array
-    {
-        // Match dictionary terms by n-grams up to 4 words
-        $tokens = $this->tokens($t);
-        $n      = count($tokens);
-        $hits   = [];
-        $sum    = 0.0;
-
-        // Quick single token matches
-        for ($i = 0; $i < $n; $i++) {
-            $w1 = $tokens[$i];
-            if (isset($dict[$w1])) { $hits[] = $w1; $sum += $dict[$w1]; }
-        }
-
-        // Multiword phrases (2..4)
-        for ($size = 4; $size >= 2; $size--) {
-            for ($i = 0; $i <= $n - $size; $i++) {
-                $phrase = implode(' ', array_slice($tokens, $i, $size));
-                if (isset($dict[$phrase])) {
-                    $hits[] = $phrase;
-                    $sum += $dict[$phrase] * 1.2; // small bonus for specific phrases
-                    $i += ($size - 1); // skip ahead
-                }
-            }
-        }
-
-        // Deduplicate hits
-        $hits = array_values(array_unique($hits));
-
-        return [$sum, $hits];
-    }
-
-
-    /* ----------------------- Dictionary building ------------------------ */
-
-    /**
-     * Collect seed texts with a source tag.
-     * Tries vector table first, then falls back to PW pages.
-     * Each row: ['text' => string, 'source' => 'title'|'h1'|'h2'|'h3'|'slug'|'breadcrumb'|'faq_q'|'other']
-     */
-    protected function collectSeeds(int $langId): array
-    {
-        $out = [];
-
-        // 1) From vector metadata table if present
-        $database = $this->wire('database');
-        try {
-            $tbl = $database->escapeTable('chatai_vec_chunks');
-            // Optional schema: id, lang_id, title, h1, h2, h3, slug, breadcrumb, faq_q
-            $q = $database->query("SHOW TABLES LIKE '{$tbl}'");
-            if ($q && $q->num_rows > 0) {
-                $sql = "SELECT lang_id, title, headings, slug FROM {$tbl} WHERE lang_id=" . (int)$langId . " LIMIT 20000";
-                $res = $database->query($sql);
-                while ($res && ($row = $res->fetch_assoc())) {
-                    foreach (['title','headings','slug'] as $k) {
-                        if (!empty($row[$k])) {
-                            if($k === 'headings') {
-                                $headings = json_decode($row[$k]);
-                                $h1 = $headings['h1'];
-                                $out[] = ['text' => (string)$h1, 'source' => 'h1'];
-                                $h2 = $headings['h2'];
-                                $out[] = ['text' => (string)$h2, 'source' => 'h2'];
-                                $h3 = $headings['h3'];
-                                $out[] = ['text' => (string)$h3, 'source' => 'h3'];
-                            } else {
-                                $out[] = ['text' => (string)$row[$k], 'source' => $k];
-                            }
-                        }
-                    }
-                }
-                if (!empty($out)) return $out;
-            }
-        } catch (\Throwable $e) {
-            // Swallow and fall back
-        }
-
-        // 2) Fallback: crawl PW pages quickly
-        $pages = $this->wire('pages');
-        $tt    = $this->wire('modules')->get('WireTextTools');
-        $languages = $this->wire('languages');
-
-        $lang = $languages ? $languages->get((int)$langId) : null;
-        if ($lang) $languages->setLanguage($lang);
-
-        // Limit scope to viewable, not hidden, not admin
-        //$selector = "has_parent!=2, include=visible, template!=admin, limit=10000";
-        $selector = "has_parent!=2, template!=admin, limit=10000";
-        foreach ($pages->findMany($selector) as $p) {
-            $title = $p->get('title');
-            if ($title) $out[] = ['text' => (string)$title, 'source' => 'title'];
-
-            // If you store headings in fields, add them here
-            foreach (['headline','summary','body'] as $field) {
-                if (!$p->hasField($field)) continue;
-                $val = (string) $p->get($field);
-                if ($val === '') continue;
-                $plain = $tt ? $tt->markupToText($val) : strip_tags($val);
-                // naive split on line breaks for headings
-                foreach (preg_split('~[\r\n]+~', $plain) as $line) {
-                    $line = trim($line);
-                    if ($line === '') continue;
-                    $out[] = ['text' => $line, 'source' => 'other'];
-                }
-            }
-
-            // Slug and crumbs
-            $out[] = ['text' => (string)$p->name, 'source' => 'slug'];
-            $out[] = ['text' => implode(' ', array_map(function($item){ return (string)$item->title; }, $p->parents()->slice(1)->explode('title'))), 'source' => 'breadcrumb'];
-        }
-
-        return $out;
-    }
-
-    protected function extractTerms(string $text): array
-    {
-        $t = $this->norm($text);
-        // keep hyphenated terms, collapse whitespace
-        $t = preg_replace('~[^\p{L}\p{N}\s\-]~u', ' ', $t);
-        $t = preg_replace('~\s+~u', ' ', $t);
-        $t = trim($t);
-        if ($t === '') return [];
-
-        $terms = [];
-        // keep both phrases and single words up to 4-grams for headings
-        $words = explode(' ', $t);
-        $n = count($words);
-        for ($i = 0; $i < $n; $i++) {
-            $w = $words[$i];
-            if ($w !== '') $terms[] = $w;
-            for ($size = 2; $size <= 4 && $i + $size <= $n; $size++) {
-                $terms[] = implode(' ', array_slice($words, $i, $size));
-            }
-        }
-        return $terms;
-    }
-
-    protected function tokens(string $t): array
-    {
-        $t = preg_replace('~[^\p{L}\p{N}\s\-]~u', ' ', $t);
-        $t = preg_replace('~\s+~u', ' ', $t);
-        $t = trim($t);
-        if ($t === '') return [];
-        return explode(' ', $t);
-    }
-
-    protected function norm(string $s): string
-    {
-        $s = mb_strtolower($s, 'UTF-8');
-        $s = preg_replace('~\s+~u', ' ', $s);
-        return trim($s);
-    }
-
-    /* ------------------------ Config and lookups ------------------------ */
-
-    protected function getIndexVersion(): int
-    {
-        // Prefer a module setting you bump after reindex.
-        $cfg = $this->getCfg();
-        if(isset($cfg['index_version'])) return (int) $cfg['index_version'];
-
-        return 1;
-    }
-
-    protected function getCustomTerms(int $langId): array
-    {
-        // Expect textarea with one per line, optional "|weight"
-        $m = $this->wire('modules')->get('ProcessChatAI');
-        $cfg = $this->getCfg();
-
-
-        $txt = '';
-        if ($m) {
-            $key = "custom_terms_$langId";
-            $txt = (string) ($cfg[$key] ?? $cfg['custom_terms'] ?? '');
-        }
-        $out = [];
-        foreach (preg_split('~\R~', $txt) as $line) {
-            $line = trim($line);
-            if ($line === '') continue;
-            $parts = explode('|', $line, 2);
-            $term = $this->norm($parts[0]);
-            $w = isset($parts[1]) ? (float)$parts[1] : 1.5;
-            $out[] = ['term' => $term, 'weight' => $w];
-        }
-        return $out;
-    }
-
-    protected function getStopTermsHard(int $langId): array
-    {
-        $cfg = $this->getCfg();
-        $txt = '';
-        if ($cfg) {
-            $key = "stop_terms_hard_$langId";
-            $txt = (string) ($cfg['$key'] ?? $mcfg['stop_terms_hard'] ?? '');
-        }
-        $set = [];
-        foreach (preg_split('~\R~', $txt) as $line) {
-            $t = $this->norm($line);
-            if ($t !== '') $set[$t] = true;
-        }
-        // Safe defaults
-        foreach (['the','a','an','of','for','to','in','on','at','by','with','from','and','or','but','about','info','information','details','hi','hello','hey','please','thanks','thank you','cheers','etc','misc','n/a','tba','tbc'] as $def) {
-            $set[$def] = true;
-        }
-        return $set;
-    }
-
-    protected function getStopTermsSoft(int $langId): array
-    {
-        $cfg = $this->getCfg();
-        $txt = '';
-        if ($cfg) {
-            $key = "stop_terms_soft_$langId";
-            $txt = (string) ($cfg['$key'] ?? $cfg['stop_terms_soft'] ?? '');
-        }
-        $set = [];
-        foreach (preg_split('~\R~', $txt) as $line) {
-            $t = $this->norm($line);
-            if ($t !== '') $set[$t] = true;
-        }
-        // Safe defaults
-        foreach (['services','products','solutions','resources','articles','blog','page','section','today','now','latest','recent','get','have','make','do','provide','offer','use','help','support','can','could','would'] as $def) {
-            $set[$def] = true;
-        }
-        return $set;
-    }
 }

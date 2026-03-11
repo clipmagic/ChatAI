@@ -18,9 +18,12 @@ $info = [
     'version' => "0.0.3Alpha",
     'author' => 'Clip magic',
     'summary' => 'Embeds a configurable AI chatbot powered by OpenAI on your site.',
-    'autoload' => 'admin',
+    'autoload' => true,
     'icon' => 'comment',
     'requires' => ["PHP>=8.0", "ProcessWire>=3.0.201","TextformatterEntities", "TextformatterNewlineBR"],
     'installs' => "ProcessChatAI",
+    'permissions' => [
+        'chatai'
+    ],
     'href' => 'https://processwire.com/modules/chatai/'
 ];

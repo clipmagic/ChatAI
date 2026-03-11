@@ -26,5 +26,6 @@ $info = [
         'name' => 'manage-chats',
         'parent' => 'setup',
         'title' => 'ChatAI'
-    ]
+    ],
+    'permission' => 'chatai',
 ];
