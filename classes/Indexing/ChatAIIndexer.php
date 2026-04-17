@@ -13,7 +13,7 @@ class ChatAIIndexer extends Wire
     use HeadingsOnlyExtractor;
 
     /** Build or rebuild a single page for one language */
-    public function buildForPage(Page $page, int $langId): array
+/*    public function buildForPage(Page $page, int $langId): array
     {
         $files = $this->wire('files');
         $config = $this->wire('config');
@@ -33,7 +33,44 @@ class ChatAIIndexer extends Wire
         $content['slug']  = $page->name;
 
         return $content;
+    }*/
+
+
+    public function buildForPage(Page $page, int $langId): array
+    {
+        $files = $this->wire('files');
+        $config = $this->wire('config');
+
+        if($files->exists($config->paths->templates . 'chatai-rag.php')) {
+            $html = $files->render('chatai-rag.php', ['page' => $page]);
+        } else {
+            $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
+            $view = $ragViewPath . 'chatai-rag.php';
+            $html = $files->render($view, ['page' => $page], ['allowedPaths', [$ragViewPath]]);
+        }
+
+        $tt = new WireTextTools();
+        $text = $tt->markupToText($html);
+
+        $title = trim((string) $page->get('headline|title'));
+        $template = $page->template->name;
+        $path = $page->path;
+
+        $context = implode("\n", array_filter([
+                "Template: {$template}",
+                $title !== '' ? "Page: {$title}" : '',
+                "Path: {$page->path}",
+            ])) . "\n\n";
+
+        $content = [];
+        $content['text'] = $context . $text;
+        $content['heads'] = $this->getPageHeadings($page, $langId);
+        $content['slug'] = $page->name;
+
+        return $content;
     }
+
+
 
     /* ------------------------------ helpers ------------------------------ */
 

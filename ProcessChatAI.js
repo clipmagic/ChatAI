@@ -10,6 +10,65 @@ $(document).ready(function() {
     }
 });
 
+document.addEventListener('DOMContentLoaded', function () {
+    var form = document.querySelector('form[name="chat-ai-settings"], form#chat-ai-settings');
+    if (!form) return;
+
+    var activeSubmit = null;
+    var actionLabels = {
+        rag_run_reindex: {
+            normal: 'Running re-index...',
+            dryRun: 'Running dry run...'
+        },
+        rag_run_remove: {
+            normal: 'Running bulk removal...',
+            dryRun: 'Checking matched pages...'
+        }
+    };
+
+    form.addEventListener('click', function (event) {
+        var button = event.target.closest('input[type="submit"], button[type="submit"]');
+        if (!button || !form.contains(button)) return;
+
+        if (button.name && actionLabels[button.name]) {
+            activeSubmit = button;
+        }
+    });
+
+    form.addEventListener('submit', function (event) {
+        if (event.submitter && event.submitter.name && actionLabels[event.submitter.name]) {
+            activeSubmit = event.submitter;
+        }
+
+        if (!activeSubmit || !actionLabels[activeSubmit.name]) return;
+
+        var labels = actionLabels[activeSubmit.name];
+        var dryRun = false;
+
+        if (activeSubmit.name === 'rag_run_reindex') {
+            dryRun = !!form.querySelector('[name="rag_dry_run"]:checked');
+        } else if (activeSubmit.name === 'rag_run_remove') {
+            dryRun = !!form.querySelector('[name="rag_remove_dry_run"]:checked');
+        }
+
+        activeSubmit.value = dryRun ? labels.dryRun : labels.normal;
+        activeSubmit.setAttribute('aria-busy', 'true');
+
+        if (!form.querySelector('input[type="hidden"][data-chatai-submit="' + activeSubmit.name + '"]')) {
+            var hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = activeSubmit.name;
+            hidden.value = '1';
+            hidden.setAttribute('data-chatai-submit', activeSubmit.name);
+            form.appendChild(hidden);
+        }
+
+        requestAnimationFrame(function () {
+            activeSubmit.disabled = true;
+        });
+    });
+});
+
 
 /* Dashboard Components */
 
@@ -132,7 +191,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
     }
 
-    var eventsChart = null;
+ //   var eventsChart = null;
 
     function normalizeEventSummary(summary) {
         summary = summary || {};
@@ -240,19 +299,6 @@ document.addEventListener('DOMContentLoaded', function () {
         return t.obslogExportUrl + '&days=' + encodeURIComponent(days);
     }
 
-    // Export CSV
-    var exportBtn = document.querySelector('.chatai-dashboard-export-csv');
-    if (exportBtn) {
-        exportBtn.addEventListener('click', function (ev) {
-            ev.preventDefault();
-            var active = document.querySelector('.chatai-range-link.is-active');
-            var days = active ? parseInt(active.getAttribute('data-range'), 10) || 7 : 7;
-
-            var url = buildExportUrl(days);
-            if (url) window.location.href = url;
-        });
-    }
-
     // Wire range links
     if (rangeLinks && rangeLinks.length) {
         rangeLinks.forEach(function (link) {
@@ -285,18 +331,4 @@ document.addEventListener('DOMContentLoaded', function () {
     // Event types doughnut chart (initial render)
     updateEventsChart(window.chatAIEventSummary || {});
 
-    // CSV export based on current range
-    var exportBtn = document.querySelector('.chatai-dashboard-export-csv');
-    if (exportBtn && t.obslogExportUrl) {
-        exportBtn.addEventListener('click', function () {
-            var days = 7;
-            if (rangeSelect) {
-                days = parseInt(rangeSelect.value, 10) || 7;
-            }
-
-            var url = t.obslogExportUrl + '&days=' + encodeURIComponent(days);
-            window.location.href = url;
-        });
-    }
 });
-

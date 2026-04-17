@@ -30,6 +30,7 @@ class ProcessChatAI extends Process
         parent::__construct();
     }
 
+
     // TEMP: classifier smoke-test; returns JSON string for easy echo in Tracy
     public function debugClassify(?string $text = null): string {
         // \ProcessWire\Input $input
@@ -257,13 +258,15 @@ class ProcessChatAI extends Process
         return json_encode(['html' => $html]);
     }
 
-    protected function renderObslogCsv(): void {
+/*    protected function renderObslogCsv(): void {
+
+
         $input   = $this->wire('input');
 
         $days = (int) $input->get('days') ?: 7;
         $days = max(1, min($days, 60));
-
         $logger = $this->chatAI()->logger();
+
         if (!$logger) {
             header('Content-Type: text/plain; charset=utf-8');
             echo "Observability log is not available.";
@@ -286,16 +289,17 @@ class ProcessChatAI extends Process
             date('Ymd_His')
         );
 
-        header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
-        header('Pragma: no-cache');
-        header('Expires: 0');
 
-        $out = fopen('php://output', 'w');
-        if (!$out) {
-            echo "Failed to open output stream.";
-            return;
-        }
+       header('Content-Type: text/csv; charset=utf-8');
+                header('Content-Disposition: attachment; filename="' . $filename . '"');
+                header('Pragma: no-cache');
+                header('Expires: 0');
+
+                $out = fopen('php://output', 'w');
+                if (!$out) {
+                    echo "Failed to open output stream.";
+                    return;
+                }
 
         // 1) Discover all meta keys across this result set
         $metaKeys = [];
@@ -353,7 +357,111 @@ class ProcessChatAI extends Process
         }
 
         fclose($out);
+    }*/
+
+
+protected function renderObslogCsv(): void
+{
+    $logger = $this->chatAI()->logger();
+
+    if (!$logger) {
+        $this->warning($this->_('Observability log is not available.'));
+        return;
     }
+
+    if (!method_exists($logger, 'fetchRange')) {
+        $this->warning($this->_('Observability export is not available.'));
+        return;
+    }
+
+    $to   = new \DateTime('now');
+    $from = new \DateTime('2000-01-01 00:00:00');
+    $rows = $logger->fetchRange($from, $to);
+
+    $filename = sprintf(
+        'chatai_obslog_%s.csv',
+        date('Ymd_His')
+    );
+
+    $files   = $this->wire('files');
+    $tempDir = $files->tempDir();
+    $dir     = rtrim($tempDir->get(), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR;
+    $fullPath = $dir . $filename;
+
+    $out = fopen($fullPath, 'w');
+    if (!$out) {
+        $this->warning($this->_('Failed to create CSV export file.'));
+        return;
+    }
+
+    // 1) Discover all meta keys across this result set
+    $metaKeys = [];
+    foreach ($rows as $row) {
+        if (empty($row['meta'])) continue;
+
+        $decoded = json_decode($row['meta'], true);
+        if (!is_array($decoded)) continue;
+
+        foreach ($decoded as $k => $v) {
+            if (!array_key_exists($k, $metaKeys)) {
+                $metaKeys[$k] = true;
+            }
+        }
+    }
+
+    $metaKeys = array_keys($metaKeys);
+    sort($metaKeys);
+
+    // 2) Write header row: base columns + meta columns
+    $baseHeader = ['id', 'created', 'chat_id', 'event_type', 'status', 'model'];
+    $header     = array_merge($baseHeader, $metaKeys);
+    fputcsv($out, $header, ',', '"', '\\');
+
+    // 3) Write each row, flattening meta into columns
+    foreach ($rows as $row) {
+        $meta = [];
+
+        if (!empty($row['meta'])) {
+            $decoded = json_decode($row['meta'], true);
+            if (is_array($decoded)) {
+                $meta = $decoded;
+            }
+        }
+
+        $line = [
+            $row['id'] ?? '',
+            $row['created'] ?? '',
+            $row['chat_id'] ?? '',
+            $row['event_type'] ?? '',
+            $row['status'] ?? '',
+            $row['model'] ?? '',
+        ];
+
+        foreach ($metaKeys as $k) {
+            $val = $meta[$k] ?? '';
+
+            if (is_bool($val)) {
+                $val = $val ? '1' : '0';
+            } elseif (is_array($val)) {
+                $val = json_encode($val, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            }
+
+            $line[] = $val;
+        }
+
+        fputcsv($out, $line, ',', '"', '\\');
+    }
+
+    fclose($out);
+
+    $files->send($fullPath, [
+        'forceDownload' => true,
+        'exit' => false,
+    ]);
+
+    exit;
+}
+
 
     protected function pruneObslogRetainDays(int $retainDays): int
     {
@@ -497,6 +605,8 @@ class ProcessChatAI extends Process
             $startId   = (int) ($input->post->rag_start_id ?? 0);
             $t0 = microtime(true);
 
+            $this->wire('session')->close();
+
             $summary = $this->runBackfillReconcile($selector, $startId, $batchSize, $dryRun, $forceRebuild);
             $summary['latency_ms'] = (int) round((microtime(true) - $t0) * 1000);
 
@@ -515,6 +625,8 @@ class ProcessChatAI extends Process
             $sanitizer = $this->wire('sanitizer');
             $selector = $sanitizer->text($input->post->rag_remove_selector);
             if(!empty($selector)) {
+                $this->wire('session')->close();
+
                 $pages = $this->wire('pages');
                 $pagesToRemove = $pages->findMany($selector);
                 if(!empty($pagesToRemove)) {
@@ -586,7 +698,7 @@ class ProcessChatAI extends Process
                 $chatAI = $this->chatAI();
                 $cfg = (array) $chatAI->promptService()->loadPromptSettings();
                 $nextVer = null;
-                $prefixes = $chatAI->classifer()->dictionaryPrefixes();
+                $prefixes = $chatAI->classifier()->dictionaryPrefixes();
                 $shouldBump = false;
 
                 foreach ($prefixes as $p) {

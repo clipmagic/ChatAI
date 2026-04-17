@@ -151,12 +151,14 @@ class Classifier extends Wire
         }
         return $vals;
     }
+
     // "a,b\nc" → ['a','b','c'] lowercased, trimmed, deduped
     protected function normMany(array $vals): array {
         $out = [];
         foreach ($vals as $s) $out = array_merge($out, $this->normList($s));
         return array_values(array_unique($out));
     }
+
     protected function normList(?string $s): array {
         if (!$s) return [];
         $parts = preg_split('~[\r\n,]+~', $s, -1, PREG_SPLIT_NO_EMPTY);
@@ -178,12 +180,14 @@ class Classifier extends Wire
         }
         return false;
     }
+
     protected function isGreeting(string $t, array $dict): bool {
         foreach ($dict['smalltalk_set'] as $w => $_) {
             if (mb_stripos($t, $w) === 0) return true;
         }
         return false;
     }
+
     protected function isMeta(string $t, array $dict): bool {
         foreach ($dict['meta_terms_set'] as $w => $_) {
             if ($w !== '' && mb_stripos($t, $w) !== false) return true;
@@ -206,6 +210,7 @@ class Classifier extends Wire
         }
         return ($t === '...' || $t === '…');
     }
+
     protected function hitsAny(string $t, array $set): bool {
         foreach ($set as $term => $_) {
             if ($term !== '' && mb_stripos($t, $term) !== false) return true;

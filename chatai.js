@@ -237,7 +237,6 @@ let chatai = {
         // Close only when the backdrop itself was clicked
         if (dlg) {
             dlg.addEventListener('click', (e) => {
-                console.log(e.target)
                 if (e.target === dlg) dlg.close();
             });
         }
