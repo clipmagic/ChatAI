@@ -29,6 +29,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     /** @var \ProcessWire\ChatAIObsLog */
     protected ?\ProcessWire\ChatAIObsLog $logger = null;
 
+    protected ?\ProcessWire\ChatAIModelClient $modelClient = null;
+
     protected ?\ProcessWire\ChatAIPromptService $promptService = null;
 
     public function construct()
@@ -38,11 +40,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function init()
     {
-        if ($this->wire("process") && empty($this->api_key)) {
-            $this->warning("OpenAI API key missing; ChatAI may not function.");
-        }
-
         // Load helpers
+        require_once __DIR__ . "/classes/ChatAIModelClient.php";
         require_once __DIR__ . "/classes/Indexing/IndexContentExtractor.php";
         require_once __DIR__ . "/classes/Indexing/ChatAIIndexer.php";
         require_once __DIR__ . "/classes/RAG/RAG.php";
@@ -71,9 +70,18 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $this->logger->setWire($this->wire());
         }
 
+        if ($this->modelClient === null) {
+            $this->modelClient = new \ProcessWire\ChatAIModelClient();
+            $this->modelClient->setWire($this->wire());
+        }
+
         if ($this->promptService === null) {
             $this->promptService = new \ProcessWire\ChatAIPromptService();
             $this->promptService->setWire($this->wire());
+        }
+
+        if ($this->wire("process") && !$this->modelClient()->modelEntry((string) ($this->agenttools_model_id ?? ""))) {
+            $this->warning("AgentTools model missing; ChatAI model-backed replies may not function.");
         }
 
         // Hooks
@@ -784,210 +792,16 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     public function callModelForText(array $messagesForApi): \stdClass
     {
-        $o = (object) ["ok" => false];
-
-        $postData = $this->buildPostData($this->model, $messagesForApi);
-        [$url, $body] = $this->normalizeApiRequest($this->model, $postData);
-
-        $http = new \ProcessWire\WireHttp();
-        $http->setHeaders([
-            "Authorization" => "Bearer " . $this->api_key,
-            "Content-Type" => "application/json",
-            "Accept" => "application/json",
-        ]);
-        $http->setTimeout(25);
-
-        try {
-            $response = $http->send($url, json_encode($body), "POST");
-            if ($response === false) {
-                $this->wire("log")->save(
-                    "chatai",
-                    "OpenAI transport error: " . $http->getError(),
-                );
-                $o->error = "transport_error";
-                return $o;
-            }
-            $data = json_decode($response, true);
-
-            if (!is_array($data)) {
-                $this->wire("log")->save(
-                    "chatai",
-                    "OpenAI: unexpected non-JSON response",
-                );
-                $o->error = "unexpected_response";
-                return $o;
-            }
-
-            $isResponses = strpos($url, "/responses") !== false;
-
-            // Responses API: detect cutoff early
-            if ($isResponses) {
-                $status = $data["status"] ?? null;
-                $reason = $data["incomplete_details"]["reason"] ?? null;
-                $input_tokens = $data["usage"]["input_tokens"] ?? 0;
-                $output_tokens = $data["usage"]["output_tokens"] ?? 0;
-
-                if (
-                    $status === "incomplete" &&
-                    $reason === "max_output_tokens"
-                ) {
-                    $partial = "";
-
-                    if (!empty($data["output"]) && is_array($data["output"])) {
-                        foreach ($data["output"] as $seg) {
-                            if (
-                                empty($seg["content"]) ||
-                                !is_array($seg["content"])
-                            ) {
-                                continue;
-                            }
-
-                            foreach ($seg["content"] as $c) {
-                                $type = $c["type"] ?? "";
-                                if (
-                                    $type !== "output_text" &&
-                                    $type !== "text"
-                                ) {
-                                    continue;
-                                }
-                                if (empty($c["text"])) {
-                                    continue;
-                                }
-
-                                $text = $c["text"];
-
-                                // Responses text object: ['value' => '...', ...]
-                                if (is_array($text) && isset($text["value"])) {
-                                    $text = $text["value"];
-                                }
-
-                                if (is_string($text) && $text !== "") {
-                                    $partial .= $text;
-                                }
-                            }
-                        }
-                    }
-
-                    $o->ok = true;
-                    $o->text = $this->wire("sanitizer")->textarea($partial);
-                    $o->cutoff = true; // flag up to sendMessage()
-                    $o->input_tokens = $input_tokens;
-                    $o->output_tokens = $output_tokens;
-                    return $o;
-                }
-            }
-
-            // Normal success shapes:
-
-            if ($isResponses) {
-                // Modern Responses output → content → type=output_text
-                if (!empty($data["output"]) && is_array($data["output"])) {
-                    foreach ($data["output"] as $seg) {
-                        if (
-                            empty($seg["content"]) ||
-                            !is_array($seg["content"])
-                        ) {
-                            continue;
-                        }
-
-                        foreach ($seg["content"] as $c) {
-                            $type = $c["type"] ?? "";
-                            if ($type !== "output_text" && $type !== "text") {
-                                continue;
-                            }
-                            if (empty($c["text"])) {
-                                continue;
-                            }
-
-                            $text = $c["text"];
-
-                            // Handle object form: { value: '...', ... }
-                            if (is_array($text) && isset($text["value"])) {
-                                $text = $text["value"];
-                            }
-
-                            if (is_string($text)) {
-                                $o->ok = true;
-                                $o->text = $text;
-                                $o->input_tokens = $input_tokens;
-                                $o->output_tokens = $output_tokens;
-                                return $o;
-                            }
-                        }
-                    }
-                }
-
-                // Some providers mirror chat-like choices
-                if (!empty($data["choices"][0]["message"]["content"])) {
-                    $o->ok = true;
-                    $o->text =
-                        (string) $data["choices"][0]["message"]["content"];
-                    $o->input_tokens = $input_tokens;
-                    $o->output_tokens = $output_tokens;
-                    return $o;
-                }
-            } else {
-                // /chat/completions (generic, no gpt-4 specifics)
-                if (!empty($data["choices"][0]["message"]["content"])) {
-                    $o->ok = true;
-                    $o->text =
-                        (string) $data["choices"][0]["message"]["content"];
-                    $o->input_tokens = $input_tokens;
-                    $o->output_tokens = $output_tokens;
-                    return $o;
-                }
-            }
-
-            // Provider error surfaced
-            if (!empty($data["error"])) {
-                $code = strtolower(
-                    (string) ($data["error"]["code"] ?? "provider_error"),
-                );
-                if (
-                    in_array(
-                        $code,
-                        [
-                            "rate_limit_exceeded",
-                            "rate_limit",
-                            "insufficient_quota",
-                            "throttled",
-                        ],
-                        true,
-                    )
-                ) {
-                    $code = "rate_limit_exceeded";
-                }
-                $this->wire("log")->save(
-                    "chatai",
-                    "OpenAI error: " .
-                        $code .
-                        " | " .
-                        ($data["error"]["message"] ?? ""),
-                );
-                $o->error = $code;
-                $o->chat_error = $data["error"];
-                $o->input_tokens = $input_tokens;
-                $o->output_tokens = $output_tokens;
-
-                return $o;
-            }
-
-            // Unexpected success shape
-            $this->wire("log")->save(
-                "chatai",
-                "OpenAI: missing choices/content | body=" .
-                    substr($response, 0, 500),
-            );
-            $o->error = "unexpected_response";
-            return $o;
-        } catch (\Throwable $e) {
-            $this->wire("log")->save(
-                "chatai",
-                "OpenAI exception: " . $e->getMessage(),
-            );
-            $o->error = "exception";
-            return $o;
-        }
+        return $this->modelClient()->call(
+            $messagesForApi,
+            (string) ($this->agenttools_model_id ?? ""),
+            [
+                "max_tokens" => (int) ($this->max_completion_tokens ?? 1000),
+                "reasoning_effort" => (string) ($this->reasoningEffort ?? ""),
+                "verbosity" => (string) ($this->verbosity ?? ""),
+                "timeout" => (int) ($this->llm_timeout ?? 25),
+            ],
+        );
     }
 
     protected function isCurrentPageRef(
@@ -1395,11 +1209,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 "max_messages" => (int) ($credit["max"] ?? 0),
                 "stop" => false,
                 "lang_id" => (int) ($userLangId ?? 0),
-                "model" => (string) $this->model,
-                "endpoint" =>
-                    stripos($this->model, "gpt-5") === 0
-                        ? "/v1/responses"
-                        : "/v1/chat/completions",
+                "model" => (string) ($m->model ?? $this->modelClient()->selectedLabel((string) ($this->agenttools_model_id ?? ""))),
+                "endpoint" => (string) ($m->endpoint ?? ""),
                 "cutoff" => !empty($result->cutoff),
                 "input_tokens" => (int) ($m->input_tokens ?? 0),
                 "output_tokens" => (int) ($m->output_tokens ?? 0),
@@ -1655,6 +1466,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $this->logger;
     }
 
+    public function modelClient(): \ProcessWire\ChatAIModelClient
+    {
+        return $this->modelClient;
+    }
+
     // logs one compact event to chatai_obslog
     protected function obsLog($result, array $meta = []): void
     {
@@ -1696,7 +1512,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             json_encode(
                 [
                     "text" => $plain,
-                    "model" => (string) ($this->model ?? ""),
+                    "model" => (string) ($this->agenttools_model_id ?? ""),
                     "lang" => (int) ($this->langId ?? 0),
                     "system" => (string) ($this->systemPrompt ?? ""),
                 ],

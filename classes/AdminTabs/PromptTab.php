@@ -35,7 +35,8 @@ class PromptTab
         $inputfields = $m->get("InputfieldWrapper");
         $inputfields->addClass("WireTab");
         $inputfields->attr("name", "prompt");
-        $inputfields->attr("id", $m->_("Prompt"));
+        $inputfields->attr("id", "chatai-tab-prompt");
+        $inputfields->attr("title", $m->_("Prompt"));
 
         // auto-generate or write your own
         // Yes or No

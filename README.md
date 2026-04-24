@@ -1,4 +1,31 @@
 ### Developer documentation
+## ChatAI
+
+ChatAI is a ProcessWire chatbot module. It keeps chatbot behaviour inside the site:
+
+- prompt construction
+- blacklist and local reply handling
+- RAG context selection
+- message limits
+- observability logging
+- frontend widget responses
+
+Chat generation uses models configured in AgentTools. Configure provider credentials, endpoints, and model choices in AgentTools, then select the AgentTools model in ChatAI module settings.
+
+### Requirements
+
+- ProcessWire 3.0.201 or newer
+- PHP 8.0 or newer
+- AgentTools 7 or newer
+- TextformatterEntities
+- TextformatterNewlineBR
+
+### Model Configuration
+
+ChatAI uses AgentTools as the model registry for chat responses. AgentTools owns API keys and provider endpoints. ChatAI stores only the selected AgentTools model id and generation controls such as max tokens, timeout, verbosity, and reasoning effort.
+
+The current RAG embedding layer is unchanged. It still uses OpenAI `text-embedding-3-small` through the OpenAI RAG embedding API key setting. Provider-agnostic embeddings and vector metadata are deferred to a later change.
+
 ## Accessibility & Call-to-Action (CTA) Guidelines
 
 ### Why

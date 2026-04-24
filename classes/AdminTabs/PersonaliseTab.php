@@ -30,9 +30,8 @@ class PersonaliseTab
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
         $inputfields->attr('name', 'personalise');
-
-        $TabId = $userLang->_('Personalise');
-        $inputfields->attr('id', $TabId);
+        $inputfields->attr('id', 'chatai-tab-personalise');
+        $inputfields->attr('title', $m->_('Personalise'));
 
         $fieldset = $m->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'fsbot');
@@ -173,7 +172,7 @@ class PersonaliseTab
         $form->add($inputfields);
 
         $output = [];
-        $key = $TabId;
+        $key = 'personalise';
         $value = $inputfields->render();
         $output[$key] = $value;
         $output['form'] = $form;
@@ -181,6 +180,4 @@ class PersonaliseTab
         return $output;
     }
 }
-
-
 

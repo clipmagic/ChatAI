@@ -15,12 +15,12 @@
 
 $info = [
     'title' => 'AI Chatbot for ProcessWire',
-    'version' => "0.0.3Alpha",
+    'version' => "0.0.4Alpha",
     'author' => 'Clip magic',
-    'summary' => 'Embeds a configurable AI chatbot powered by OpenAI on your site.',
+    'summary' => 'Embeds a configurable AI chatbot powered by AgentTools model configuration on your site.',
     'autoload' => true,
     'icon' => 'comment',
-    'requires' => ["PHP>=8.0", "ProcessWire>=3.0.201","TextformatterEntities", "TextformatterNewlineBR"],
+    'requires' => ["PHP>=8.0", "ProcessWire>=3.0.201", "AgentTools>=7", "TextformatterEntities", "TextformatterNewlineBR"],
     'installs' => "ProcessChatAI",
     'permissions' => [
         'chatai'

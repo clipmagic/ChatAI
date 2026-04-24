@@ -25,9 +25,8 @@ class DictionaryTab
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
         $inputfields->attr('name', 'dictionary');
-
-        $TabId = $userLang->_('Dictionary');
-        $inputfields->attr('id', $TabId);
+        $inputfields->attr('id', 'chatai-tab-dictionary');
+        $inputfields->attr('title', $m->_('Dictionary'));
 
         $fieldset = $m->get('InputfieldFieldset');
         $fieldset->attr('name+id', 'relevance');
@@ -278,7 +277,7 @@ class DictionaryTab
         $form->add($inputfields);
 
         $output = [];
-        $key = $TabId;
+        $key = 'dictionary';
         $value = $inputfields->render();
         $output[$key] = $value;
         $output['form'] = $form;

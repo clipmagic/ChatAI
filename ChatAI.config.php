@@ -1,114 +1,16 @@
 <?php namespace ProcessWire;
 
-if (!function_exists('\ProcessWire\fetchOpenAIModels')) {
-    function fetchOpenAIModels($configData): array
-    {
-        $apiKey = trim((string) ($configData["api_key"] ?? ""));
-        if ($apiKey === "") {
-            return [];
-        }
-
-        $http = new WireHttp();
-        $http->setHeaders([
-            "Authorization" => "Bearer " . $apiKey,
-        ]);
-
-        $json = $http->get("https://api.openai.com/v1/models");
-        if (!$json) {
-            return [];
-        }
-
-        $data = json_decode($json, true);
-        if (empty($data["data"]) || !is_array($data["data"])) {
-            return [];
-        }
-
-        $models = [];
-
-        $excludeTerms = [
-            "codex",
-            "realtime",
-            "audio",
-            "search",
-            "transcribe",
-            "tts",
-            "image",
-            "embedding",
-            "moderation",
-            "latest",
-        ];
-
-        foreach ($data["data"] as $item) {
-            $id = $item["id"] ?? "";
-            if (!$id || !str_starts_with($id, "gpt-5")) {
-                continue;
-            }
-
-            // exclude dated snapshots like gpt-5-mini-2025-02-10
-            if (preg_match('/-\d{4}-\d{2}-\d{2}$/', $id)) {
-                continue;
-            }
-
-            // exclude unwanted variants
-            foreach ($excludeTerms as $term) {
-                if (str_contains($id, $term)) {
-                    continue 2;
-                }
-            }
-
-            $models[$id] = $id === "gpt-5-mini" ? "$id (recommended)" : $id;
-        }
-
-        ksort($models);
-
-        return $models;
-    }
-}
-
-if (!function_exists('\ProcessWire\refreshModels')) {
-    function refreshModels(array $configData): array
-    {
-        $models = \ProcessWire\fetchOpenAIModels($configData);
-
-        if ($models) {
-            $current = $configData["model"] ?? "";
-            if (!$current || !isset($models[$current])) {
-                $configData["model"] = array_key_first($models);
-            }
-            $configData["available_models"] = $models;
-            wire()->message(__("Available models refreshed from OpenAI."));
-        } else {
-            wire()->warning(
-                __(
-                    "Could not fetch models from OpenAI. Keeping existing model list.",
-                ),
-            );
-        }
-        return $configData;
-    }
-}
-
-// default models if nothing fetched yet
-$defaultModels = [
-    "gpt-5-mini" => "gpt-5-mini (recommended)",
-    "gpt-5-nano" => "gpt-5-nano (fastest / cheapest)",
-    "gpt-5.2" => "gpt-5.2 (stronger reasoning)",
-    "gpt-5.1" => "gpt-5.1",
-    "gpt-5" => "gpt-5 (legacy)",
-];
+require_once __DIR__ . "/classes/ChatAIModelClient.php";
 
 $configData = $this->getConfig("ChatAI");
-$inputPost = wire("input")->post;
+$modelClient = new ChatAIModelClient();
+$modelClient->setWire(wire());
+$modelList = $modelClient->modelOptions();
+$selectedModel = (string) ($configData["agenttools_model_id"] ?? "");
 
-if (wire("input")->requestMethod("POST") && $inputPost->refresh_models !== null) {
-    $postedApiKey = trim((string) ($inputPost->api_key ?? ""));
-    if ($postedApiKey !== "") {
-        $configData["api_key"] = $postedApiKey;
-    }
-
-    $configData = refreshModels($configData);
+if (!$selectedModel || ($modelList && !isset($modelList[$selectedModel]))) {
+    $selectedModel = (string) (array_key_first($modelList) ?? "");
 }
-$modelList = $configData["available_models"] ?? $defaultModels;
 
 $roles = wire("roles");
 $promptRoleOptions = [];
@@ -122,37 +24,26 @@ foreach ($roles as $role) {
 
 $config = [
     [
-        "name" => "openai",
+        "name" => "agenttools",
         "type" => "fieldset",
-        "label" => __("OpenAI Settings"),
+        "label" => __("AgentTools LLM"),
+        "description" => __("ChatAI uses AgentTools for chat model credentials, provider, endpoint, and model selection."),
         "children" => [
             [
-                "name" => "api_key",
-                "type" => "text",
-                "label" => __("OpenAI API Key"),
-                "required" => true,
-                "collapsed" => 5,
-                "value" => "",
-            ],
-            [
-                "name" => "model",
+                "name" => "agenttools_model_id",
                 "type" => "select",
-                "label" => __("OpenAI Model"),
+                "label" => __("Model"),
                 "columnWidth" => 100,
-                "options" => $modelList,
-                "value" => "gpt-5-mini",
-            ],
-            [
-                "name" => "refresh_models",
-                "type" => "submit",
-                "value" => __("Refresh Model List"),
-                "icon" => "refresh",
-                "columnWidth" => 100,
+                "options" => $modelList ?: ["" => __("No AgentTools models configured")],
+                "value" => $selectedModel,
+                "notes" => $modelList
+                    ? __("Models are configured in AgentTools. Re-save ChatAI after changing AgentTools models.")
+                    : __("Configure at least one Engineer model/API key in AgentTools first."),
             ],
             [
                 "name" => "finetune",
                 "type" => "fieldset",
-                "label" => __("Fine Tune Settings"),
+                "label" => __("Generation Settings"),
                 "children" => [
                     [
                         "name" => "verbosity",
@@ -178,6 +69,13 @@ $config = [
                             "high" => "High",
                         ],
                         "value" => "medium",
+                    ],
+                    [
+                        "name" => "llm_timeout",
+                        "type" => "integer",
+                        "label" => __("Timeout seconds"),
+                        "columnWidth" => 20,
+                        "value" => 25,
                     ],
                     [
                         "name" => "max_completion_tokens",
@@ -206,6 +104,22 @@ $config = [
                         "value" => 3,
                     ],
                 ],
+            ],
+        ],
+    ],
+    [
+        "name" => "openai_embeddings",
+        "type" => "fieldset",
+        "label" => __("OpenAI RAG Embeddings"),
+        "description" => __("Temporary setting for the existing RAG indexer. Chat responses use AgentTools; RAG embeddings still use OpenAI text-embedding-3-small until the embedding layer is updated separately."),
+        "collapsed" => 5,
+        "children" => [
+            [
+                "name" => "api_key",
+                "type" => "text",
+                "label" => __("OpenAI API Key for RAG embeddings"),
+                "collapsed" => 5,
+                "value" => "",
             ],
         ],
     ],

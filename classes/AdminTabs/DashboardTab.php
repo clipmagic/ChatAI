@@ -14,7 +14,8 @@ class DashboardTab
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
         $inputfields->attr('name', 'dashboard');
-        $inputfields->attr('id', $m->_('Dashboard'));
+        $inputfields->attr('id', 'chatai-tab-dashboard');
+        $inputfields->attr('title', $m->_('Dashboard'));
 
         // --- General: chunk on save ---
         $f = $m->get('InputfieldCheckbox');
