@@ -12,7 +12,9 @@ This section focuses on *what content is eligible*, *how scope and visibility ar
 
 ChatAI indexes only content that is explicitly configured for RAG use.
 
-Content eligibility is defined in the **Prompt** tab, where administrators specify which templates, fields, and selectors are considered suitable for indexing.
+Content eligibility is defined in the **Prompt** tab, where administrators specify which templates are considered suitable for indexing.
+
+Within those eligible templates, the actual indexed content is defined by the `chatai-rag.php` rendering layer.
 
 Only content that meets these criteria is processed by the indexer and made available for reference during response generation.
 
@@ -20,7 +22,7 @@ This allows site owners to ensure that:
 
 - only curated, intentional content is used,
 - internal or administrative pages are excluded,
-- and irrelevant layout or navigation markup is ignored.
+- and site developers can prevent specific fields from entering the vector database by curating `chatai-rag.php`.
 
 ---
 
@@ -29,7 +31,7 @@ This allows site owners to ensure that:
 Content scope is controlled through a combination of:
 
 - included and excluded templates,
-- CSS selectors used for extraction,
+- the curated content rendered by `chatai-rag.php`,
 - and ProcessWire access control rules.
 
 ChatAI respects page visibility and access permissions when indexing and retrieving content.  
@@ -79,14 +81,14 @@ Adjusting batch size and scope helps balance performance and completeness, espec
 When RAG output does not behave as expected, common causes include:
 
 - overly broad template inclusion,
-- selectors that capture layout or navigation instead of content,
+- overly broad or uncurated `chatai-rag.php` output,
 - indexing highly structured or non-textual fields,
 - or expecting RAG to replace site navigation or search.
 
 In most cases, improving results involves:
 
 - tightening content scope,
-- refining selectors,
+- refining `chatai-rag.php`,
 - and reindexing curated content.
 
 Changes to excerpt rendering are rarely the first step.

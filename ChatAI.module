@@ -42,7 +42,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     {
         // Load helpers
         require_once __DIR__ . "/classes/ChatAIModelClient.php";
-        require_once __DIR__ . "/classes/Indexing/IndexContentExtractor.php";
         require_once __DIR__ . "/classes/Indexing/ChatAIIndexer.php";
         require_once __DIR__ . "/classes/RAG/RAG.php";
         require_once __DIR__ . "/classes/Classifier.php";
@@ -161,256 +160,14 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         });
     }
 
-    /*   public function getModuleConfigInputfields(array $data) : InputfieldWrapper
-    {
-        $modules     = wire('modules');
-
-        $this->___refreshModels();
-
-        $inputfields = new InputfieldWrapper();
-
-        // -----------------------------------------------------
-        // OpenAI Settings
-        // -----------------------------------------------------
-        $fieldset = $modules->get('InputfieldFieldset');
-        $fieldset->attr('name+id', 'openai');
-        $fieldset->label = $this->_('OpenAI Settings');
-
-        $f = $modules->get('InputfieldText');
-        $f->attr('name+id', 'api_key');
-        $f->label = $this->_('OpenAI API Key');
-        $f->required = true;
-        $f->collapsed = 5;
-        $f->value = $data['api_key'] ?? '';
-        $fieldset->add($f);
-
-        // Model select – GPT-5 family
-        $f = $modules->get('InputfieldSelect');
-        $f->attr('name+id', 'model');
-        $f->label = $this->_('OpenAI Model');
-        $f->columnWidth = 100;
-
-        $f->addOptions([
-            'gpt-5-mini' => 'gpt-5-mini (recommended)',
-            'gpt-5-nano' => 'gpt-5-nano (fastest / cheapest)',
-            'gpt-5.2'    => 'gpt-5.2 (stronger reasoning)',
-            'gpt-5.1'    => 'gpt-5.1',
-            'gpt-5'      => 'gpt-5 (legacy)',
-            'gpt-6'      => 'gpt-6 (not yet released)',
-        ]);
-        $f->value = $data['model'] ?? 'gpt-5-mini';
-        $fieldset->add($f);
-
-
-        // Refresh models from OpenAI
-        $f = $modules->get('InputfieldSubmit');
-        $f->attr('name+id', 'refresh_models');
-        $f->value = $this->_('Refresh Model List');
-        $f->icon = 'refresh';
-        $f->columnWidth = 100;
-        $f->attr('style', 'margin-block-end: 20px;');
-
-        $fieldset->add($f);
-
-        $subfieldset = $modules->get('InputfieldFieldset');
-        $subfieldset->attr('name+id', 'finetune');
-        $subfieldset->label = $this->_('Fine Tune Settings');
-
-        // Verbosity (used by your buildPostData; always visible now)
-        $f = $modules->get('InputfieldSelect');
-        $f->attr('name+id', 'verbosity');
-        $f->label = $this->_('Verbosity');
-        $f->columnWidth = 20;
-        $f->addOptions([
-            'low'    => 'Low',
-            'medium' => 'Medium',
-            'high'   => 'High',
-        ]);
-        $f->value = $data['verbosity'] ?? 'medium';
-        $subfieldset->add($f);
-
-        // Reasoning Effort (GPT-5 style knob; always visible now)
-        $f = $modules->get('InputfieldSelect');
-        $f->attr('name+id', 'reasoningEffort');
-        $f->label = $this->_('Reasoning Effort');
-        $f->columnWidth = 20;
-        $f->addOptions([
-            'minimal' => 'Minimal',
-            'low'     => 'Low',
-            'medium'  => 'Medium',
-            'high'    => 'High',
-        ]);
-        $f->value = $data['reasoningEffort'] ?? 'medium';
-        $subfieldset->add($f);
-
-        // Max tokens per message (Responses: max_output_tokens)
-        $f = $modules->get('InputfieldInteger');
-        $f->attr('name+id', 'max_completion_tokens');
-        $f->label = $this->_('Max tokens');
-        $f->columnWidth = 20;
-        $f->notes = $this->_('Max tokens per message');
-        $f->value = $data['max_completion_tokens'] ?? 1000;
-        $subfieldset->add($f);
-
-        // Max questions per conversation
-        $f = $modules->get('InputfieldInteger');
-        $f->attr('name+id', 'max_messages');
-        $f->label = $this->_('Maximum questions');
-        $f->columnWidth = 20;
-        $f->notes = $this->_('Max questions per conversation');
-        $f->value = $data['max_messages'] ?? 20;
-        $subfieldset->add($f);
-
-        // Blacklist strikes
-        $f = $modules->get('InputfieldInteger');
-        $f->attr('name+id', 'max_strikes');
-        $f->label = $this->_('Maximum blacklist');
-        $f->columnWidth = 20;
-        $f->notes = $this->_('Number of blacklist strikes before being blocked');
-        $f->value = $data['max_strikes'] ?? 3;
-        $subfieldset->add($f);
-
-        $fieldset->add($subfieldset);
-
-        $inputfields->add($fieldset);
-
-        // -----------------------------------------------------
-        // Roles allowed to craft prompt
-        // -----------------------------------------------------
-        $f = $modules->get('InputfieldCheckboxes');
-        $f->attr('name+id', 'prompt_roles');
-        $f->label = $this->_('Roles allowed to craft prompt');
-        $roles = $this->wire('roles');
-        $options = [];
-
-        // List all roles except guest and superuser.
-        // Superuser is always allowed;
-        foreach ($roles as $role) {
-            if ($role->name === 'superuser') continue;
-            $options[$role->name] = $role->name;
-        }
-
-        $f->addOptions($options);
-
-        // Stored as an array of role names; if empty, only superuser can use the dashboard
-        $f->value = $data['prompt_roles'] ?? [];
-
-        $f->columnWidth = 50;
-        $note = $this->_(
-            "Superuser is always allowed.\r\n" .
-            "If no roles are selected, only superusers can access the ChatAI dashboard tabs.\r\n" .
-            "Select one or more roles (for example the 'chatai' role created on install) to allow them as well."
-        );
-        $f->notes($note);
-        $inputfields->add($f);
-
-        // -----------------------------------------------------
-        // File locations
-        // -----------------------------------------------------
-        $fieldset = $modules->get('InputfieldFieldset');
-        $fieldset->attr('name+id', 'files');
-        $fieldset->label($this->_('Files'));
-
-        $f = $modules->get('InputfieldText');
-        $f->attr('name+id', 'widget');
-        $f->label($this->_('Path to widget file'));
-        $f->notes("Default is /site/modules/ChatAI/chatai-widget.php");
-        $value = $data['widget'] ?? '/site/modules/ChatAI/chatai-widget.php';
-        $f->attr('value', $value);
-        $f->stripTags = true;
-        $fieldset->add($f);
-
-        $f = $modules->get('InputfieldText');
-        $f->attr('name+id', 'css');
-        $f->label($this->_('Path to CSS file'));
-        $f->notes("Default is /site/modules/ChatAI/chatai.css");
-        $value = $data['css'] ?? '/site/modules/ChatAI/chatai.css';
-        $f->attr('value', $value);
-        $f->stripTags = true;
-        $fieldset->add($f);
-
-        $f = $modules->get('InputfieldText');
-        $f->attr('name+id', 'js');
-        $f->label($this->_('Path to JS file'));
-        $f->notes("Default is /site/modules/ChatAI/chatai.js");
-        $value = $data['js'] ?? '/site/modules/ChatAI/chatai.js';
-        $f->attr('value', $value);
-        $f->stripTags = true;
-        $fieldset->add($f);
-
-        $inputfields->add($fieldset);
-
-        // -----------------------------------------------------
-        // Debug helpers
-        // -----------------------------------------------------
-        $fieldset = $modules->get('InputfieldFieldset');
-        $fieldset->attr('name+id', 'chatai_debug');
-        $fieldset->label = $this->_('Debug helpers');
-        $fieldset->collapsed = 1; // collapsed by default
-        $fieldset->description = $this->_('Development-only tools for testing edge cases. These settings should remain OFF in production.');
-        $inputfields->add($fieldset);
-
-        // Master toggle
-        $f = $modules->get('InputfieldCheckbox');
-        $f->attr('name+id', 'debug_enabled');
-        $f->label = $this->_('Enable debug helpers');
-        $f->value = (int) ($data['debug_enabled'] ?? 0);
-        $fieldset->add($f);
-
-        // ---- Forced cutoff ----
-        $f = $modules->get('InputfieldCheckbox');
-        $f->attr('name+id', 'debug_force_cutoff');
-        $f->label = $this->_('Force cutoff response');
-        $f->notes = $this->_('Truncates the assistant response server-side, sanitises to plain text, and sets cutoff=true.');
-        $f->value = (int) ($data['debug_force_cutoff'] ?? 0);
-        $f->showIf = 'debug_enabled=1';
-        $fieldset->add($f);
-
-        $f = $modules->get('InputfieldSelect');
-        $f->attr('name+id', 'debug_cutoff_mode');
-        $f->label = $this->_('Cutoff mode');
-        $f->addOptions([
-            'chars'   => $this->_('Characters'),
-            'words'   => $this->_('Words'),
-            'awkward' => $this->_('Awkward boundary (stress test)'),
-        ]);
-        $f->value = $data['debug_cutoff_mode'] ?? 'chars';
-        $f->columnWidth = 33;
-        $f->showIf = 'debug_enabled=1, debug_force_cutoff=1';
-        $fieldset->add($f);
-
-        $f = $modules->get('InputfieldInteger');
-        $f->attr('name+id', 'debug_cutoff_value');
-        $f->label = $this->_('Cutoff value');
-        $f->notes = $this->_('For Characters: number of chars. For Words: number of words. For Awkward: base char count before stress text is appended.');
-        $f->value = (int) ($data['debug_cutoff_value'] ?? 200);
-        $f->columnWidth = 33;
-        $f->showIf = 'debug_enabled=1, debug_force_cutoff=1';
-        $fieldset->add($f);
-
-        // ---- Latency injection (optional but useful) ----
-        $f = $modules->get('InputfieldSelect');
-        $f->attr('name+id', 'debug_latency_ms');
-        $f->label = $this->_('Artificial delay');
-        $f->notes = $this->_('Adds a server-side delay (superuser only) to test busy guards and UX states.');
-        $f->addOptions([
-            '0'    => $this->_('None'),
-            '250'  => $this->_('250 ms'),
-            '1000' => $this->_('1 s'),
-            '3000' => $this->_('3 s'),
-            '8000' => $this->_('8 s'),
-        ]);
-        $f->value = (string) ($data['debug_latency_ms'] ?? '0');
-        $f->columnWidth = 33;
-        $f->showIf = 'debug_enabled=1';
-        $fieldset->add($f);
-
-        $inputfields->add($fieldset);
-
-        return $inputfields;
-    }*/
-
     /* Hook functions */
+    /**
+     * @param Page $page
+     * @param array $cfg
+     * @param array $opts
+     * @return array
+     * @throws WireException
+     */
     public function processRagForPage(
         Page $page,
         array $cfg,
@@ -560,31 +317,50 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
     /* Class getters */
 
+    /**
+     * @return RAG
+     */
     public function rag(): \ProcessWire\RAG
     {
         return $this->rag;
     }
 
+    /**
+     * @return ChatAIIndexer
+     */
     public function indexer(): \ProcessWire\ChatAIIndexer
     {
         return $this->indexer;
     }
 
+    /**
+     * @return Classifier
+     */
     public function classifier(): \ProcessWire\Classifier
     {
         return $this->classifier;
     }
 
+    /**
+     * @return ChatAIObsLog
+     */
     public function logger(): \ProcessWire\ChatAIObsLog
     {
         return $this->logger;
     }
 
+    /**
+     * @return ChatAIPromptService
+     */
     public function promptService(): \ProcessWire\ChatAIPromptService
     {
         return $this->promptService;
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function renderWidget(): string
     {
         $config = wire("config");
@@ -592,18 +368,29 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $this->promptService()->getWidget($path);
     }
 
+    /**
+     * @return string
+     */
     public function renderStyles(): string
     {
         $css = "<link rel='stylesheet' href='$this->css' type='text/css'>";
         return $css;
     }
 
+    /**
+     * @return string
+     */
     public function renderScript(): string
     {
         $js = "<script src='$this->js' ></script>";
         return $js;
     }
 
+    /**
+     * @param $message
+     * @return stdClass
+     * @throws WireException
+     */
     public function isMessageAllowed($message): \stdClass
     {
         $session = $this->wire("session");
@@ -674,6 +461,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $output;
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     * @throws \Random\RandomException
+     */
     protected function getCurrentChatId(): string
     {
         $session = $this->wire("session");
@@ -688,7 +480,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $chatId;
     }
 
-    private function buildPostData(string $model, array $messages): \stdClass
+ /*   private function buildPostData(string $model, array $messages): \stdClass
     {
         $p = new \stdClass();
         $p->model = $model;
@@ -716,13 +508,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
                 break;
         }
         return $p;
-    }
+    }*/
 
     /**
      * Decide endpoint + normalize body per model family.
      * Returns [string $url, array $body]
      */
-    protected function normalizeApiRequest(string $model, $payload): array
+/*    protected function normalizeApiRequest(string $model, $payload): array
     {
         // deep-cast stdClass → array for [] access
         if (is_object($payload)) {
@@ -788,8 +580,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             // drop verbosity (not public)
         }
         return [$endpoint, $body];
-    }
+    }*/
 
+    /**
+     * @param array $messagesForApi
+     * @return stdClass
+     * @throws WireException
+     */
     public function callModelForText(array $messagesForApi): \stdClass
     {
         return $this->modelClient()->call(
@@ -797,13 +594,19 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             (string) ($this->agenttools_model_id ?? ""),
             [
                 "max_tokens" => (int) ($this->max_completion_tokens ?? 1000),
-                "reasoning_effort" => (string) ($this->reasoningEffort ?? ""),
+                "reasoning_effort" => (string) ($this->reasoning_effort ?? ""),
                 "verbosity" => (string) ($this->verbosity ?? ""),
                 "timeout" => (int) ($this->llm_timeout ?? 25),
             ],
         );
     }
 
+    /**
+     * @param string $msg
+     * @param int|null $langId
+     * @param array $cfg
+     * @return bool
+     */
     protected function isCurrentPageRef(
         string $msg,
         ?int $langId,
@@ -829,6 +632,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return false;
     }
 
+    /**
+     * @param string $msg
+     * @param int|null $langId
+     * @param array $cfg
+     * @param int $pageId
+     * @return string
+     */
     protected function getRetrievalScope(
         string $msg,
         ?int $langId,
@@ -842,6 +652,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return "site";
     }
 
+    /**
+     * @param string $label
+     * @param string $scope
+     * @param callable $cfgLang
+     * @return string
+     */
     protected function buildNoContextReply(
         string $label,
         string $scope,
@@ -890,6 +706,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             "I couldn’t find a relevant page on this site. What would you like me to look for?";
     }
 
+    /**
+     * @param array $payload
+     * @return array|false[]
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function handleUrlsInPayload(array &$payload): array
     {
         $config = $this->wire("config");
@@ -956,38 +778,47 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         ];
     }
 
-    public function sendMessage(
+    /**
+     * @param string $userMessage
+     * @param int|null $langId
+     * @param int|null $pid
+     * @param string|null $url
+     * @param array $meta
+     * @return array
+     * @throws WireException
+     */
+    protected function buildSendContext(
         string $userMessage,
         ?int $langId = null,
         ?int $pid = null,
         ?string $url = null,
         array $meta = [],
-    ): \stdClass {
+    ): array {
         $san = $this->wire("sanitizer");
         $user = $this->wire("user");
 
         $result = (object) [
             "stop" => false,
-            "error" => null, // (object){msg:string, warning?:bool} or null
-            "reply" => null, // (object){msg:string} or null
-            "html" => null, // optional trusted HTML
+            "error" => null,
+            "reply" => null,
+            "html" => null,
             "blacklisted" => false,
             "name" => null,
         ];
 
-        // Validate / normalise (defensive)
         $msg = $san->text($userMessage);
         $langId = $langId !== null ? (int) $san->int($langId) : null;
         if ($langId < 1) {
             $langId = null;
         }
+
         $pid = $pid !== null ? (int) $san->int($pid) : 0;
         if ($pid < 1) {
             $pid = 0;
         }
+
         $url = $url !== null ? (string) $san->url($url) : "";
 
-        // Context for CTA hook
         $payload = [
             "status" => "ok",
             "openai_error" => null,
@@ -999,91 +830,129 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             "url" => $url,
         ];
 
-        // Language switch (soft)
-        if ($langId !== null) {
-            try {
-                $languages = $this->wire("languages");
-                if ($languages && $langId) {
-                    $lang = $languages->get($langId);
-                    if ($lang && $lang->id) {
-                        $languages->setLanguage($lang);
-                    }
-                }
-            } catch (\Throwable $e) {
-                /* ignore */
-            }
+        return [
+            "msg" => $msg,
+            "langId" => $langId,
+            "pid" => $pid,
+            "url" => $url,
+            "meta" => $meta,
+            "payload" => $payload,
+            "result" => $result,
+            "user" => $user,
+        ];
+    }
+
+    /**
+     * @param int|null $langId
+     * @return void
+     */
+    protected function applyLanguageContext(?int $langId): void
+    {
+        if ($langId === null) {
+            return;
         }
+
+        try {
+            $languages = $this->wire("languages");
+            if ($languages && $langId) {
+                $lang = $languages->get($langId);
+                if ($lang && $lang->id) {
+                    $languages->setLanguage($lang);
+                }
+            }
+        } catch (\Throwable $e) {
+            /* ignore */
+        }
+    }
+
+    /**
+     * @param array $ctx
+     * @return stdClass|null
+     * @throws WireException
+     * @throws WirePermissionException
+     */
+    protected function handleLocalFlow(array &$ctx): ?\stdClass
+    {
+        $msg = $ctx["msg"];
+        $payload = &$ctx["payload"];
+        $result = $ctx["result"];
 
         $result->name = $this->promptService()->getBotName();
         $result = $this->isMessageAllowed($msg);
+
         $urlCheck = $this->handleUrlsInPayload($payload);
         if (!empty($urlCheck["blocked"])) {
             $result->error = $this->getErrorMessage(16);
             $payload["status"] = "blocked";
             $payload["reply"] = $result->error->msg;
-            $result = $this->handleCTA($payload, $result);
-            return $result;
+            return $this->handleCTA($payload, $result);
         }
 
         if ($result && $result->error) {
-            // Optional CTA
             $payload["status"] = "not_allowed";
             $payload["error"] = $result->error;
-            $result = $this->handleCTA($payload, $result);
-            return $result;
+            return $this->handleCTA($payload, $result);
         }
 
-        $messages = [];
         $svc = $this->promptService();
-
-        $session = $this->wire("session");
-        $system = $session->getFor("chatai", "system_prompt");
-        if (!$system) {
-            $system = ["role" => "system", "content" => $svc->getPrompt()];
-            $session->setFor("chatai", "system_prompt", $system);
-        }
-        $messages[] = ["role" => "system", "content" => $system];
-
-        // Classify message for context
         $decision = $this->classifier->classify($msg);
-
         $cfg = $svc->loadPromptSettings();
-        $userLangId = $user->language->id;
+        $userLangId = (int) ($ctx["user"]->language->id ?? 0);
 
         $cfgLang = function (string $key) use ($cfg, $userLangId) {
             $k = $key . "__" . $userLangId;
             return (string) ($cfg[$k] ?? ($cfg[$key] ?? ""));
         };
 
+        $ctx["svc"] = $svc;
+        $ctx["decision"] = $decision;
+        $ctx["cfg"] = $cfg;
+        $ctx["userLangId"] = $userLangId;
+        $ctx["cfgLang"] = $cfgLang;
+
         $label = (string) ($decision["label"] ?? "");
 
-        // Quick out if small talk
         if ($label === "small_talk") {
             $result->reply =
                 $cfgLang("smalltalk_reply") ?:
                 "Hello. How can I help you today?";
-            // Optional CTA
             $payload["status"] = $label;
             $payload["reply"] = $result->reply;
-            $result = $this->handleCTA($payload, $result);
-            return $result;
+            return $this->handleCTA($payload, $result);
         }
 
-        // Quick out if blocked action
         if ($label === "blocked_action") {
             $result->reply =
                 $cfgLang("blocked_action_verbs_reply") ?:
                 "I’m sorry. I can’t do that. Please ask me something else about this site.";
-
-            // Optional CTA
             $payload["status"] = $label;
             $payload["reply"] = $result->reply;
-            $result = $this->handleCTA($payload, $result);
-
-            return $result;
+            return $this->handleCTA($payload, $result);
         }
 
-        // RAG path
+        $ctx["result"] = $result;
+        return null;
+    }
+
+    /**
+     * @param array $ctx
+     * @return stdClass|null
+     * @throws WireException
+     * @throws WirePermissionException
+     */
+    protected function prepareRetrieval(array &$ctx): ?\stdClass
+    {
+        $msg = $ctx["msg"];
+        $langId = $ctx["langId"];
+        $pid = $ctx["pid"];
+        $payload = &$ctx["payload"];
+        $result = $ctx["result"];
+        $cfg = $ctx["cfg"];
+        $cfgLang = $ctx["cfgLang"];
+        $decision = $ctx["decision"];
+        $user = $ctx["user"];
+
+        $label = (string) ($decision["label"] ?? "");
         $ragLangId = $langId ?? 0;
         $k = 6;
         $retrievalScope = $this->getRetrievalScope($msg, $langId, $cfg, $pid);
@@ -1092,7 +961,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $p = $this->wire("pages")->get((int) $pid);
             if ($p && $p->id && !$this->rag->shouldIndexPage($p, $cfg)) {
                 $label = "no_access";
-                $top = []; // force canned reply
+                $top = [];
             }
         }
 
@@ -1122,31 +991,239 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             "retrieval scope={$retrievalScope} label={$label} pid=" . (int) $pid,
         );
 
-        if (!empty($top)) {
-
-
-        bd(array_map(function($r) {
-                return [
-                    'page_id' => $r['page_id'] ?? null,
-                    'title' => $r['title'] ?? '',
-                    'source_url' => $r['source_url'] ?? '',
-                    'score' => $r['score'] ?? null,
-                ];
-            }, $top), 'top before buildContextFromChunks');
-
-            $context = $this->rag->buildContextFromChunks($top);
-        } else {
+        if (empty($top)) {
             $result->reply = $this->buildNoContextReply(
                 $label,
                 $retrievalScope,
                 $cfgLang,
             );
-            // Optional CTA
             $payload["status"] = $label;
             $payload["replyText"] = $result->reply;
-            $result = $this->handleCTA($payload, $result);
-            return $result;
+            return $this->handleCTA($payload, $result);
         }
+
+        $ctx["label"] = $label;
+        $ctx["retrievalScope"] = $retrievalScope;
+        $ctx["top"] = $top;
+        $ctx["context"] = $this->rag->buildContextFromChunks($top);
+        $ctx["result"] = $result;
+
+        return null;
+    }
+
+    /**
+     * @param array $ctx
+     * @param array $messages
+     * @param array $credit
+     * @return array
+     * @throws WireException
+     */
+    protected function executeModelRequest(array &$ctx, array $messages, array $credit): array
+    {
+        $msg = $ctx["msg"];
+        $result = $ctx["result"];
+        $userLangId = $ctx["userLangId"];
+        $payload = &$ctx["payload"];
+
+        $started = microtime(true);
+
+        try {
+            $messages = $this->beforeSend($messages);
+            $modelResult = $this->callModelForText($messages);
+            $modelResult = $this->normaliseResponse($modelResult);
+            $modelResult = $this->afterSend($modelResult);
+
+            if (!empty($modelResult->cutoff)) {
+                $result->cutoff = true;
+                $result->error = $this->getErrorMessage(20);
+            }
+
+            $ph = $this->previewAndHash((string) $msg);
+            $event = !empty($result->cutoff) ? "cutoff" : "reply";
+
+            $meta = [
+                "event" => $event,
+                "chat_id" => $this->getCurrentChatId(),
+                "latency_ms" => (int) round(
+                    (microtime(true) - $started) * 1000,
+                ),
+                "count" => (int) ($credit["count"] ?? 0),
+                "remaining" => (int) ($credit["remaining"] ?? 0),
+                "max_messages" => (int) ($credit["max"] ?? 0),
+                "stop" => false,
+                "lang_id" => (int) ($userLangId ?? 0),
+                "model" => (string) ($modelResult->model ?? $this->modelClient()->selectedLabel((string) ($this->agenttools_model_id ?? ""))),
+                "endpoint" => (string) ($modelResult->endpoint ?? ""),
+                "cutoff" => !empty($result->cutoff),
+                "input_tokens" => (int) ($modelResult->input_tokens ?? 0),
+                "output_tokens" => (int) ($modelResult->output_tokens ?? 0),
+                "user_msg_preview" => $ph["preview"],
+                "user_msg_hash" => $ph["hash"],
+            ];
+
+            if (empty($modelResult->ok)) {
+                $meta["err_code"] = !empty($modelResult->error)
+                    ? (string) $modelResult->error
+                    : "unknown";
+            } else {
+                $meta["stop"] = (bool) $result->stop;
+
+                $answerSource =
+                    $result->html ?? ($result->reply ?? ($modelResult->text ?? ""));
+                $meta["answer_len"] = strlen(
+                    (string) strip_tags((string) $answerSource),
+                );
+            }
+
+            $this->obsLog($modelResult, $meta);
+
+            $ctx["result"] = $result;
+            $ctx["payload"] = $payload;
+
+            return [
+                "model" => $modelResult,
+                "meta" => $meta,
+            ];
+        } catch (\Throwable $e) {
+            $this->wire("log")->save(
+                "chatai",
+                "sendMessage model error: " . $e->getMessage(),
+            );
+
+            $meta = [
+                "err_code" => "exception",
+            ];
+
+            return [
+                "model" => (object) ["ok" => false, "error" => "exception"],
+                "meta" => $meta,
+            ];
+        }
+    }
+
+    /**
+     * @param array $ctx
+     * @param stdClass $modelResult
+     * @param array $credit
+     * @return stdClass
+     * @throws WireException
+     */
+    protected function finaliseSuccessfulResponse(
+        array &$ctx,
+        \stdClass $modelResult,
+        array $credit,
+    ): \stdClass {
+        $result = $ctx["result"];
+        $payload = &$ctx["payload"];
+        $session = $this->wire("session");
+        $hist = $session->getFor("chatai", "history") ?? [];
+
+        $raw = (string) $modelResult->text;
+
+        $allowed = trim(
+            (string) ($this["values"]["allowed_tags"] ??
+                "p,ul,li,ol,strong,em,code,br,a[href]"),
+        );
+
+        if (preg_match('/(^|,)\\s*a(\\s*,|$)/i', $allowed)) {
+            $allowed = preg_replace(
+                '/(^|,)\\s*a(\\s*,|$)/i',
+                '$1a[href]$2',
+                $allowed,
+            );
+        }
+
+        $allowed = implode(
+            ",",
+            array_filter(array_map("trim", explode(",", $allowed))),
+        );
+
+        $result->html = $this->wire("sanitizer")->purify($raw, [
+            "HTML.Allowed" => $allowed,
+        ]);
+
+        $plain = trim(strip_tags($raw));
+        $result->reply = $this->wire("sanitizer")->entities($plain);
+
+        if ($plain !== "") {
+            $hist[] = ["role" => "assistant", "content" => $plain];
+            $session->setFor("chatai", "history", array_slice($hist, -6));
+        }
+
+        if (
+            empty($result->cutoff) &&
+            isset($credit["remaining"]) &&
+            (int) $credit["max"] > 0
+        ) {
+            $remaining = (int) $credit["remaining"];
+
+            if ($remaining === 1) {
+                if (empty($result->stop)) {
+                    $result->error = $this->getErrorMessage(10);
+                    $result->stop = false;
+                }
+            } elseif ($remaining === 0) {
+                $result->error = $this->getErrorMessage(4);
+                $result->stop = true;
+                $payload["status"] = "cutoff";
+                $payload["error"] = $result->error;
+            }
+        }
+
+        $payload["reply"] = $result->reply;
+        $ctx["result"] = $this->handleCTA($payload, $result);
+
+        return $ctx["result"];
+    }
+
+    /**
+     * @param string $userMessage
+     * @param int|null $langId
+     * @param int|null $pid
+     * @param string|null $url
+     * @param array $meta
+     * @return stdClass
+     * @throws WireException
+     * @throws WirePermissionException
+     */
+    public function sendMessage(
+        string $userMessage,
+        ?int $langId = null,
+        ?int $pid = null,
+        ?string $url = null,
+        array $meta = [],
+    ): \stdClass {
+        $ctx = $this->buildSendContext($userMessage, $langId, $pid, $url, $meta);
+        $msg = $ctx["msg"];
+        $langId = $ctx["langId"];
+        $pid = $ctx["pid"];
+        $url = $ctx["url"];
+        $payload = &$ctx["payload"];
+        $result = $ctx["result"];
+
+        $this->applyLanguageContext($langId);
+
+        if ($early = $this->handleLocalFlow($ctx)) {
+            return $early;
+        }
+
+        $svc = $ctx["svc"];
+        $userLangId = $ctx["userLangId"];
+        $messages = [];
+
+        $session = $this->wire("session");
+        $system = $session->getFor("chatai", "system_prompt");
+        if (!$system) {
+            $system = ["role" => "system", "content" => $svc->getPrompt()];
+            $session->setFor("chatai", "system_prompt", $system);
+        }
+        $messages[] = ["role" => "system", "content" => $system];
+
+        if ($retrieval = $this->prepareRetrieval($ctx)) {
+            return $retrieval;
+        }
+
+        $context = $ctx["context"];
 
         // optional: add RAG context as an extra system message if you built it
         $hist = $session->getFor("chatai", "history") ?? [];
@@ -1179,153 +1256,30 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             return $result;
         }
 
-        // Model call
-        try {
-            $started = microtime(true);
-
-            $messages = $this->beforeSend($messages);
-            $m = $this->callModelForText($messages);
-            $m = $this->normaliseResponse($m);
-            $m = $this->afterSend($m);
-
-            // If the low-level wrapper flagged a cutoff, record it on the result
-            if (!empty($m->cutoff)) {
-                $result->cutoff = true;
-                $result->error = $this->getErrorMessage(20);
-            }
-
-            // Common context
-            $ph = $this->previewAndHash((string) $msg);
-            $event = !empty($result->cutoff) ? "cutoff" : "reply";
-
-            $meta = [
-                "event" => $event,
-                "chat_id" => $this->getCurrentChatId(),
-                "latency_ms" => (int) round(
-                    (microtime(true) - $started) * 1000,
-                ),
-                "count" => (int) ($credit["count"] ?? 0),
-                "remaining" => (int) ($credit["remaining"] ?? 0),
-                "max_messages" => (int) ($credit["max"] ?? 0),
-                "stop" => false,
-                "lang_id" => (int) ($userLangId ?? 0),
-                "model" => (string) ($m->model ?? $this->modelClient()->selectedLabel((string) ($this->agenttools_model_id ?? ""))),
-                "endpoint" => (string) ($m->endpoint ?? ""),
-                "cutoff" => !empty($result->cutoff),
-                "input_tokens" => (int) ($m->input_tokens ?? 0),
-                "output_tokens" => (int) ($m->output_tokens ?? 0),
-                "user_msg_preview" => $ph["preview"],
-                "user_msg_hash" => $ph["hash"],
-            ];
-
-            // Add ok-dependent meta and log once
-            if (empty($m->ok)) {
-                $meta["err_code"] = !empty($m->error)
-                    ? (string) $m->error
-                    : "unknown";
-            } else {
-                $meta["stop"] = (bool) $result->stop;
-
-                $answerSource =
-                    $result->html ?? ($result->reply ?? ($m->text ?? ""));
-                $meta["answer_len"] = strlen(
-                    (string) strip_tags((string) $answerSource),
-                );
-            }
-
-            $this->obsLog($m, $meta);
-        } catch (\Throwable $e) {
-            // Keep this: it is genuinely useful
-            $this->wire("log")->save(
-                "chatai",
-                "sendMessage model error: " . $e->getMessage(),
-            );
-
-            $m = (object) ["ok" => false, "error" => "exception"];
-
-            // Ensure meta exists so later code does not see an undefined variable
-            if (!isset($meta) || !is_array($meta)) {
-                $meta = [];
-            }
-            $meta["err_code"] = "exception";
-        }
+        $exec = $this->executeModelRequest($ctx, $messages, $credit);
+        $m = $exec["model"];
+        $meta = $exec["meta"];
+        $result = $ctx["result"];
 
         // Interpret (single exit point)
         if (empty($m->ok)) {
             return $this->handleModelError($m, $result, $payload, $meta);
         }
 
-        $raw = (string) $m->text; // expected HTML fragment per your prompt
-
-        // Sanitize allowed tags server-side
-        $allowed = trim(
-            (string) ($this["values"]["allowed_tags"] ??
-                "p,ul,li,ol,strong,em,code,br,a[href]"),
-        );
-
-        // Ensure anchor allows href if 'a' present without attribute
-        if (preg_match('/(^|,)\\s*a(\\s*,|$)/i', $allowed)) {
-            $allowed = preg_replace(
-                '/(^|,)\\s*a(\\s*,|$)/i',
-                '$1a[href]$2',
-                $allowed,
-            );
-        }
-
-        // Normalize spaces
-        $allowed = implode(
-            ",",
-            array_filter(array_map("trim", explode(",", $allowed))),
-        );
-
-        $result->html = $this->wire("sanitizer")->purify($raw, [
-            "HTML.Allowed" => $allowed,
-        ]);
-
-        // Plain-text fallback (for screen readers / no-HTML environments)
-        $plain = trim(strip_tags($raw));
-        // $result->reply = (object)['msg' => $this->wire('sanitizer')->entities($plain)];
-        $result->reply = $this->wire("sanitizer")->entities($plain);
-
-        if ($plain !== "") {
-            $hist[] = ["role" => "assistant", "content" => $plain];
-            $session->setFor("chatai", "history", array_slice($hist, -6));
-        }
-
-        $meta["remaining"] = (int) $credit["remaining"];
-        $meta["count"] = (int) ($credit["count"] ?? 0);
-
-        // Use remaining credits to warn/stop (OpenAI-call budget)
-        // Do NOT show the "one left" warning if cutoff already forces a hard stop UX.
-        if (
-            empty($result->cutoff) &&
-            isset($credit["remaining"]) &&
-            (int) $credit["max"] > 0
-        ) {
-            $remaining = (int) $credit["remaining"];
-
-            if ($remaining === 1) {
-                if (empty($result->stop)) {
-                    // only if not already a hard stop
-                    $result->error = $this->getErrorMessage(10);
-                    $result->stop = false;
-                }
-            } elseif ($remaining === 0) {
-                $result->error = $this->getErrorMessage(4); // or 11
-                $result->stop = true;
-                $payload["status"] = "cutoff";
-                $payload["error"] = $result->error;
-            }
-        }
-
-        // Optional CTA
-        $payload["reply"] = $result->reply;
-        $result = $this->handleCTA($payload, $result);
-        return $result;
+        return $this->finaliseSuccessfulResponse($ctx, $m, $credit);
     }
 
+    /**
+     * @param $ctx
+     * @param $data
+     * @return void
+     */
     protected function handleResponse($ctx, $data) {}
 
+    /**
+     * @param $m
+     * @return stdClass
+     */
     protected function normaliseResponse($m): \stdClass
     {
         $type = gettype($m);
@@ -1359,6 +1313,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
     }
 
+    /**
+     * @param stdClass $m
+     * @param stdClass $result
+     * @param array $payload
+     * @param array $meta
+     * @return stdClass
+     */
     protected function handleModelError(
         \stdClass $m,
         \stdClass $result,
@@ -1408,6 +1369,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $this->handleCTA($payload, $result);
     }
 
+    /**
+     * @param array $payload
+     * @param stdClass $result
+     * @return stdClass
+     */
     protected function handleCTA(array $payload, \stdClass $result)
     {
         $cta = $this->afterResponse($payload);
@@ -1420,8 +1386,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
         return $result;
     }
-
-    protected function renderAssistant($ctx, $normalised) {}
 
     /** helper stubs  */
 
@@ -1461,17 +1425,29 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         ];
     }
 
+    /**
+     * @return ChatAIObsLog
+     */
     public function getObsLog(): \ProcessWire\ChatAIObsLog
     {
         return $this->logger;
     }
 
+    /**
+     * @return ChatAIModelClient
+     */
     public function modelClient(): \ProcessWire\ChatAIModelClient
     {
         return $this->modelClient;
     }
 
     // logs one compact event to chatai_obslog
+
+    /**
+     * @param $result
+     * @param array $meta
+     * @return void
+     */
     protected function obsLog($result, array $meta = []): void
     {
         $logger = $this->getObsLog();
@@ -1523,19 +1499,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return ["preview" => $preview, "hash" => $hash];
     }
 
-    public function saveToTranscript(string $role, string $content): void
-    {
-        $san = $this->wire("sanitizer");
-        $t = $this->wire("session")->getFor("chatai", "transcript") ?? [];
-        $t[] = [
-            "role" => $san->name($role), // 'system'|'user'|'assistant'
-            "content" => $san->text($content), // plain text normalization
-            "ts" => time(),
-        ];
-
-        $this->wire("session")->setFor("chatai", "transcript", $t);
-    }
-
+    /**
+     * @param $number
+     * @param $val1
+     * @param $val2
+     * @return stdClass
+     */
     public function getErrorMessage($number, $val1 = null, $val2 = null)
     {
         $errorMsg = new stdClass();
@@ -1637,207 +1606,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         return $errorMsg;
     }
 
-    // Database functions
-
-    private function withTransaction(callable $fn, int $retries = 3)
-    {
-        /** @var \WireDatabasePDO $db */
-        $db = wire("database");
-        $attempt = 0;
-
-        while (true) {
-            $attempt++;
-            try {
-                if (!$db->inTransaction()) {
-                    $db->beginTransaction();
-                }
-                $result = $fn($db);
-                $db->commit();
-                return $result;
-            } catch (\PDOException $e) {
-                if ($db->inTransaction()) {
-                    $db->rollBack();
-                }
-
-                // MySQL deadlock or lock wait timeout
-                $sqlState = $e->getCode(); // SQLSTATE, e.g. '40001'
-                $msg = $e->getMessage();
-                $isRetryable =
-                    $sqlState === "40001" ||
-                    strpos($msg, "Deadlock found") !== false ||
-                    strpos($msg, "Lock wait timeout exceeded") !== false;
-
-                if ($isRetryable && $attempt < $retries) {
-                    usleep(random_int(20_000, 120_000)); // small jitter 20-120ms
-                    continue;
-                }
-                throw $e;
-            }
-        }
-    }
-
-    /*    public function insertUserMessage(string $conversationUid, string $content, ?string $pageUrl = null, ?string $idempotencyKey = null): array {
-        return $this->withTransaction(function(\WireDatabasePDO $db) use ($conversationUid, $content, $pageUrl, $idempotencyKey) {
-
-            // 1) Lock the conversation row to serialize writers for this conversation
-            $stmt = $db->prepare("
-            SELECT id, status
-            FROM chatai_conversations
-            WHERE conversation_uid = ?
-            FOR UPDATE
-        ");
-            $stmt->execute([$conversationUid]);
-            $conv = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if (!$conv) {
-                throw new \RuntimeException("Conversation not found");
-            }
-            if (in_array($conv['status'], ['blocked','error','closed'], true)) {
-                throw new \RuntimeException("Conversation status does not accept new messages: {$conv['status']}");
-            }
-            $conversationId = (int)$conv['id'];
-
-            // 2) Idempotency check (optional)
-            if ($idempotencyKey) {
-                $stmt = $db->prepare("
-                SELECT seq, created_at
-                FROM chatai_messages
-                WHERE conversation_id = ? AND idempotency_key = ?
-                LIMIT 1
-            ");
-                $stmt->execute([$conversationId, $idempotencyKey]);
-                $existing = $stmt->fetch(\PDO::FETCH_ASSOC);
-                if ($existing) {
-                    return [
-                        'conversation_uid' => $conversationUid,
-                        'seq' => (int)$existing['seq'],
-                        'created_at' => $existing['created_at'],
-                        'idempotent' => true
-                    ];
-                }
-            }
-
-            // 3) Compute next seq inside the same TX
-            $stmt = $db->prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM chatai_messages WHERE conversation_id = ?");
-            $stmt->execute([$conversationId]);
-            $nextSeq = (int)$stmt->fetchColumn();
-
-            // 4) Insert the user message
-            $messageUid = $this->makeUlid(); // implement ULID/UUID generator
-            $stmt = $db->prepare("
-            INSERT INTO chatai_messages
-                (conversation_id, message_uid, seq, role, content, created_at, idempotency_key, page_url)
-            VALUES
-                (?, ?, ?, 'user', ?, NOW(), ?, ?)
-        ");
-            $stmt->execute([
-                $conversationId, $messageUid, $nextSeq, $content, $idempotencyKey, $pageUrl
-            ]);
-
-            // 5) Update conversation counters and last activity
-            $stmt = $db->prepare("
-            UPDATE chatai_conversations
-            SET message_count = message_count + 1,
-                user_message_count = user_message_count + 1,
-                last_activity_at = NOW()
-            WHERE id = ?
-        ");
-            $stmt->execute([$conversationId]);
-
-            // Return minimal envelope
-            return [
-                'conversation_uid' => $conversationUid,
-                'message_uid' => $messageUid,
-                'seq' => $nextSeq
-            ];
-        });
-    }*/
-
-    /*    public function insertAssistantMessage(
-        string $conversationUid,
-        string $content,
-        int $promptTokens = 0,
-        int $completionTokens = 0,
-        ?string $finishReason = null,
-        ?string $pageUrl = null
-    ): array {
-        return $this->withTransaction(function(\WireDatabasePDO $db) use ($conversationUid, $content, $promptTokens, $completionTokens, $finishReason, $pageUrl) {
-
-            // 1) Lock conversation
-            $stmt = $db->prepare("
-            SELECT id FROM chatai_conversations
-            WHERE conversation_uid = ?
-            FOR UPDATE
-        ");
-            $stmt->execute([$conversationUid]);
-            $conv = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if (!$conv) throw new \RuntimeException("Conversation not found");
-            $conversationId = (int)$conv['id'];
-
-            // 2) Next seq
-            $stmt = $db->prepare("SELECT COALESCE(MAX(seq), 0) + 1 FROM chatai_messages WHERE conversation_id = ?");
-            $stmt->execute([$conversationId]);
-            $nextSeq = (int)$stmt->fetchColumn();
-
-            // 3) Insert assistant message
-            $messageUid = $this->makeUlid();
-            $stmt = $db->prepare("
-            INSERT INTO chatai_messages
-                (conversation_id, message_uid, seq, role, content, prompt_tokens, completion_tokens, finish_reason, created_at, page_url)
-            VALUES
-                (?, ?, ?, 'assistant', ?, ?, ?, ?, NOW(), ?)
-        ");
-            $stmt->execute([
-                $conversationId, $messageUid, $nextSeq, $content,
-                $promptTokens, $completionTokens, $finishReason, $pageUrl
-            ]);
-
-            // 4) Update conversation totals
-            $stmt = $db->prepare("
-            UPDATE chatai_conversations
-            SET message_count = message_count + 1,
-                assistant_message_count = assistant_message_count + 1,
-                input_tokens = input_tokens + ?,
-                output_tokens = output_tokens + ?,
-                last_activity_at = NOW()
-            WHERE id = ?
-        ");
-            $stmt->execute([$promptTokens, $completionTokens, $conversationId]);
-
-            return [
-                'conversation_uid' => $conversationUid,
-                'message_uid' => $messageUid,
-                'seq' => $nextSeq
-            ];
-        });
-    }*/
-
-    private function makeUlid(): string
-    {
-        // Replace with a real ULID if you prefer; UUIDv4 here is fine as a drop-in
-        $data = random_bytes(16);
-        $data[6] = chr((ord($data[6]) & 0x0f) | 0x40); // version 4
-        $data[8] = chr((ord($data[8]) & 0x3f) | 0x80); // variant
-        return vsprintf("%s%s-%s-%s-%s-%s%s%s", str_split(bin2hex($data), 4));
-    }
-
-    /*    private function checkForDuplicateMessages() {
-        $db = $this->wire('database');
-    $sql = <<<SQL
-        SELECT conversation_id, seq, COUNT(*) AS c
-        FROM chatai_messages
-        GROUP BY conversation_id, seq
-        HAVING c > 1
-        LIMIT 20;
-SQL;
-        try {
-            $db->query($sql);
-            // TODO put duplicate messages on the dashboard tab
-        } catch(wireException $e) {
-            wire('log')->save('errors', "Problem checking for dupicate ChatAI messages. " . $e->getMessage());
-        }
-
-    }*/
-
     /** Hookable Methods **/
 
     /** Hook: mutate outbound request before sending to the model. */
@@ -1861,6 +1629,88 @@ SQL;
         return $payload;
     }
 
+    /**
+     * Hook: provide an embedding vector for the given text.
+     * Default implementation uses the configured OpenAI-compatible embedding settings.
+     *
+     * @throws WireException
+     */
+    public function ___embedText(string $text): array
+    {
+        $entry = $this->resolveEmbeddingModelEntry();
+        $apiKey = trim((string) ($entry["key"] ?? ""));
+        $endpoint = trim((string) ($entry["endpoint"] ?? ""));
+        $model = trim((string) ($entry["model"] ?? ""));
+
+        if ($apiKey === "") {
+            throw new WireException("Embedding AgentTools model does not have an API key configured.");
+        }
+        if ($model === "") {
+            throw new WireException("Embedding AgentTools model is not configured.");
+        }
+        if ($endpoint === "") {
+            throw new WireException("Embedding AgentTools endpoint is not configured.");
+        }
+
+        $http = new WireHttp();
+        $http->setHeader("Authorization", "Bearer " . $apiKey);
+        $http->setHeader("Content-Type", "application/json");
+        $payload = [
+            "model" => $model,
+            "input" => $text,
+        ];
+
+        $res = $http->post($endpoint, json_encode($payload));
+        if (!$res) {
+            throw new WireException("Embedding API error");
+        }
+
+        $json = json_decode($res, true);
+        if (!isset($json["data"][0]["embedding"]) || !is_array($json["data"][0]["embedding"])) {
+            throw new WireException("Invalid embedding response");
+        }
+
+        return $json["data"][0]["embedding"];
+    }
+
+    /**
+     * @return array
+     * @throws WireException
+     */
+    public function currentEmbeddingConfig(): array
+    {
+        $entry = $this->resolveEmbeddingModelEntry();
+        $apiKey = trim((string) ($entry["key"] ?? ""));
+        $endpoint = trim((string) ($entry["endpoint"] ?? ""));
+        $model = trim((string) ($entry["model"] ?? ""));
+
+        return [
+            "provider" => (string) ($entry["provider"] ?? ""),
+            "endpoint" => $endpoint,
+            "model" => $model,
+            "api_key_hash" => $apiKey !== "" ? hash("sha256", $apiKey) : "",
+        ];
+    }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
+    public function currentEmbeddingFingerprint(): string
+    {
+        return hash(
+            "sha256",
+            json_encode(
+                $this->currentEmbeddingConfig(),
+                JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE,
+            ),
+        );
+    }
+
+    /**
+     * @param Page $page
+     * @return bool
+     */
     public function ___isEligibleForChat(Page $page): bool
     {
         // Default: do not change existing behaviour.
@@ -1868,6 +1718,26 @@ SQL;
         return true;
     }
 
+    /**
+     * @return array
+     * @throws WireException
+     */
+    protected function resolveEmbeddingModelEntry(): array
+    {
+        $modelId = (string) ($this->agenttools_embedding_model_id ?? "");
+        $entry = $this->modelClient()->modelEntry($modelId);
+        if (!$entry) {
+            throw new WireException("Embedding AgentTools model is not available.");
+        }
+
+        return $entry;
+    }
+
+    /**
+     * @param Page $p
+     * @param array $cfg
+     * @return bool
+     */
     public function validTemplate(Page $p, array $cfg): bool
     {
         if (!$p->id) {
@@ -1886,13 +1756,6 @@ SQL;
             return false;
         }
 
-        if (!empty($exclIds) && in_array($tplId, $exclIds, true)) {
-            return false;
-        }
-        if (!empty($inclIds) && !in_array($tplId, $inclIds, true)) {
-            return false;
-        }
-
         // Optional per-page exclusion
         if (
             $p->hasField("chatai_exclude") &&
@@ -1906,6 +1769,10 @@ SQL;
 
     /* Install, Upgrade, Uninstall */
 
+    /**
+     * @return void
+     * @throws WireException
+     */
     private static function _createDBTables()
     {
         $db = wire("database");
@@ -1972,6 +1839,11 @@ SQL;
         }
     }
 
+    /**
+     * @return void
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     private static function _createTemplate()
     {
         $templates = wire("templates");
@@ -2043,6 +1915,11 @@ SQL;
         }
     }
 
+    /**
+     * @return void
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function ___install(): void
     {
         self::_createDBTables();
@@ -2057,6 +1934,11 @@ SQL;
         }
     }
 
+    /**
+     * @return void
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function ___uninstall()
     {
         $database = wire("database");

@@ -102,7 +102,7 @@ let chatai = {
         const n = parseInt(err.number, 10);
         return err.warning === true && n === 10;
     },
-    appendMessage: (role, obj) => {
+    appendMessage: (role, obj, persist = true) => {
         const messages = document.getElementById('chatbot-messages');
         const msg = document.createElement('div');
         msg.className = 'chatbot-msg ' + role;
@@ -150,17 +150,19 @@ let chatai = {
         }
 
 
-        chataiStore.push({
-            role,
-            type: 'text',
-            name: obj?.name || null,
-            content: msg.textContent,
-            warning: !!(obj?.error?.warning && obj?.blacklisted !== true),
-            cutoff: isCutoff
-        });
+        if (persist) {
+            chataiStore.push({
+                role,
+                type: 'text',
+                name: obj?.name || null,
+                content: msg.textContent,
+                warning: !!(obj?.error?.warning && obj?.blacklisted !== true),
+                cutoff: isCutoff
+            });
+        }
     },
 
-    appendHTML: (role, html, name) => {
+    appendHTML: (role, html, name, persist = true) => {
         const wrap = document.getElementById('chatbot-messages');
         if (name) {
             const label = document.createElement('div');
@@ -188,7 +190,9 @@ let chatai = {
         }
 
 
-        chataiStore.push({role, type: 'html', name: name || null, content: html});
+        if (persist) {
+            chataiStore.push({role, type: 'html', name: name || null, content: html});
+        }
 
     },
 
@@ -205,8 +209,8 @@ let chatai = {
                     label.textContent = rec.name;
                     wrap.appendChild(label);
                 }
-                if (rec.type === 'html') chatai.appendHTML(rec.role, rec.content, null);
-                else chatai.appendMessage(rec.role, rec.content);
+                if (rec.type === 'html') chatai.appendHTML(rec.role, rec.content, null, false);
+                else chatai.appendMessage(rec.role, rec.content, false);
             }
         } catch {
         }

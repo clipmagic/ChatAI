@@ -6,7 +6,7 @@
  * - Treats the page as the source of truth. We render a dedicated view (e.g. /site/templates/chatai-rag.php)
  *   using $files->render('chatai-rag.php', ['page' => $page]) to get clean, chrome-free HTML.
  * - Convert that HTML to plain text (preserving bullets/numbered lists) with WireTextTools->markupToText.
- * - Chunk the text, embed each chunk (OpenAI text-embedding-3-small), and store rows in chatai_vec_chunks.
+ * - Chunk the text, embed each chunk, and store rows in chatai_vec_chunks.
  * - Retrieval: FULLTEXT prefilter by lang_id, cosine re-rank on embeddings.
  *
  * What it does NOT do:
@@ -25,7 +25,6 @@ class RAG extends Wire
     /*** TABLE NAMES ***/
     public const CHATAI_VEC_TABLE = "chatai_vec_chunks";
 
-    public $indexer = "";
     public function __construct()
     {
         parent::__construct();
@@ -244,6 +243,10 @@ class RAG extends Wire
         return array_values(array_filter($out, fn($s) => $s !== ""));
     }
 
+    /**
+     * @param array $v
+     * @return string
+     */
     protected function packCsv(array $v): string
     {
         return implode(
@@ -255,11 +258,20 @@ class RAG extends Wire
         );
     }
 
+    /**
+     * @param string $csv
+     * @return array
+     */
     protected function unpackCsv(string $csv): array
     {
         return $csv ? array_map("floatval", explode(",", $csv)) : [];
     }
 
+    /**
+     * @param array $a
+     * @param array $b
+     * @return float
+     */
     protected function cosine(array $a, array $b): float
     {
         $dot = 0.0;
@@ -277,6 +289,11 @@ class RAG extends Wire
         return $dot / (sqrt($na) * sqrt($nb));
     }
 
+    /**
+     * @param string $phrase
+     * @param array $ignoredTerms
+     * @return array
+     */
     protected function prepareQueryTerms(string $phrase, array $ignoredTerms = []): array
     {
         $terms = preg_split('/[^\p{L}\p{N}]+/u', mb_strtolower(trim($phrase)), -1, PREG_SPLIT_NO_EMPTY) ?: [];
@@ -306,6 +323,11 @@ class RAG extends Wire
         return $out;
     }
 
+    /**
+     * @param array $cfg
+     * @param int $langId
+     * @return array
+     */
     protected function collectIgnoredQueryTerms(array $cfg, int $langId): array
     {
         $sets = [];
@@ -326,6 +348,14 @@ class RAG extends Wire
         return array_values(array_unique($sets));
     }
 
+    /**
+     * @param string $phrase
+     * @param array $terms
+     * @param string $field
+     * @param float $exactBoost
+     * @param float $termBoost
+     * @return float
+     */
     protected function scoreFieldMatch(string $phrase, array $terms, string $field, float $exactBoost, float $termBoost): float
     {
         $phrase = mb_strtolower(trim($phrase));
@@ -350,6 +380,10 @@ class RAG extends Wire
         return $score;
     }
 
+    /**
+     * @param $rawHeadings
+     * @return array|array[]
+     */
     protected function decodeHeadingLevels($rawHeadings): array
     {
         if (!is_string($rawHeadings) || trim($rawHeadings) === "") {
@@ -398,6 +432,13 @@ class RAG extends Wire
         return $levels;
     }
 
+    /**
+     * @param string $phrase
+     * @param array $terms
+     * @param $rawHeadings
+     * @param string $title
+     * @return float
+     */
     protected function scoreHeadingMatches(string $phrase, array $terms, $rawHeadings, string $title = ""): float
     {
         $levels = $this->decodeHeadingLevels($rawHeadings);
@@ -423,44 +464,25 @@ class RAG extends Wire
         return $score;
     }
 
-    /** OpenAI embeddings via your ChatAI module's API key */
+    /** Embeddings via ChatAI's hookable embedding method */
     protected function embedText(string $text): array
     {
         $chatai = $this->wire("modules")->get("ChatAI");
-        $http = new WireHttp();
-        $http->setHeader("Authorization", "Bearer " . $chatai->api_key);
-        $http->setHeader("Content-Type", "application/json");
-        $payload = ["model" => "text-embedding-3-small", "input" => $text];
-        $res = $http->post(
-            "https://api.openai.com/v1/embeddings",
-            json_encode($payload),
-        );
-        if (!$res) {
-            throw new WireException("Embedding API error");
+        if (!$chatai) {
+            throw new WireException("ChatAI embedding method is not available.");
         }
-        $json = json_decode($res, true);
-        if (!isset($json["data"][0]["embedding"])) {
-            throw new WireException("Invalid embedding response");
-        }
-        return $json["data"][0]["embedding"];
-    }
 
-    /** Convert HTML to plain text, preserving lists and spacing */
-    protected function toPlainText(string $html): string
-    {
-        $wireTextTools = new WireTextTools();
-        return trim(
-            $wireTextTools->markupToText($html, [
-                "convertEntities" => true,
-                "splitBlocks" => "\n\n",
-                "listItemPrefix" => "• ",
-                "linksToUrls" => false,
-                "linksToMarkdown" => false,
-                "uppercaseHeadlines" => false,
-                "underlineHeadlines" => false,
-                "collapseSpaces" => true,
-            ]),
-        );
+        try {
+            $vector = $chatai->embedText($text);
+        } catch (\Throwable $e) {
+            throw new WireException($e->getMessage(), 0, $e);
+        }
+
+        if (!is_array($vector) || !$vector) {
+            throw new WireException("ChatAI embedding method returned an invalid vector.");
+        }
+
+        return $vector;
     }
 
     /*********************************
@@ -654,6 +676,15 @@ class RAG extends Wire
         return array_slice($scored, 0, $k);
     }
 
+    /**
+     * @param string $phrase
+     * @param int $userLangId
+     * @param int $k
+     * @param int $prefilter
+     * @param User|null $user
+     * @return array
+     * @throws WireException
+     */
     public function retrieveTopK(
         string $phrase,
         int $userLangId,
@@ -832,35 +863,17 @@ class RAG extends Wire
         return ltrim($buf);
     }
 
-    // fetch cfg value by language: key__{langId} → key → ''
+
+    /**
+     * @param string $key
+     * @param array $cfg
+     * @param int $langId
+     * @return string
+     */
     protected function cfgLang(string $key, array $cfg, int $langId): string
     {
         $k = $key . "__" . $langId;
         return (string) ($cfg[$k] ?? ($cfg[$key] ?? ""));
     }
 
-    /**
-     * Return the list of languages that are publicly viewable for this page.
-     */
-    function ragPublicLanguages(Page $page): array
-    {
-        $guest = wire("users")->get("guest");
-        $langs = [];
-
-        foreach ($page->getLanguages() as $lang) {
-            // Skip if this language isn't viewable to guests for this page
-            if (!$page->viewable($guest, $lang)) {
-                continue;
-            }
-
-            // Extra guard: page itself must be public (no admin-only, etc.)
-            if (!$page->isPublic()) {
-                continue;
-            }
-
-            $langs[] = $lang;
-        }
-
-        return $langs;
-    }
 }

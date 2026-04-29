@@ -6,10 +6,15 @@ $configData = $this->getConfig("ChatAI");
 $modelClient = new ChatAIModelClient();
 $modelClient->setWire(wire());
 $modelList = $modelClient->modelOptions();
-$selectedModel = (string) ($configData["agenttools_model_id"] ?? "");
+$selectedModel = $modelClient->resolveModelId((string) ($configData["agenttools_model_id"] ?? ""));
+$selectedEmbeddingModel = $modelClient->resolveModelId((string) ($configData["agenttools_embedding_model_id"] ?? ""));
 
 if (!$selectedModel || ($modelList && !isset($modelList[$selectedModel]))) {
     $selectedModel = (string) (array_key_first($modelList) ?? "");
+}
+
+if (!$selectedEmbeddingModel || ($modelList && !isset($modelList[$selectedEmbeddingModel]))) {
+    $selectedEmbeddingModel = (string) (array_key_first($modelList) ?? "");
 }
 
 $roles = wire("roles");
@@ -58,7 +63,7 @@ $config = [
                         "value" => "medium",
                     ],
                     [
-                        "name" => "reasoningEffort",
+                        "name" => "reasoning_effort",
                         "type" => "select",
                         "label" => __("Reasoning Effort"),
                         "columnWidth" => 20,
@@ -108,18 +113,22 @@ $config = [
         ],
     ],
     [
-        "name" => "openai_embeddings",
+        "name" => "agenttools_embeddings",
         "type" => "fieldset",
-        "label" => __("OpenAI RAG Embeddings"),
-        "description" => __("Temporary setting for the existing RAG indexer. Chat responses use AgentTools; RAG embeddings still use OpenAI text-embedding-3-small until the embedding layer is updated separately."),
+        "label" => __("RAG Embeddings"),
+        "description" => __("Embeddings use a separately selected AgentTools model entry. Configure a dedicated embeddings-capable entry in AgentTools if needed. Changing embedding settings requires a full reindex of vectors."),
         "collapsed" => 5,
         "children" => [
             [
-                "name" => "api_key",
-                "type" => "text",
-                "label" => __("OpenAI API Key for RAG embeddings"),
-                "collapsed" => 5,
-                "value" => "",
+                "name" => "agenttools_embedding_model_id",
+                "type" => "select",
+                "label" => __("Embedding model"),
+                "columnWidth" => 100,
+                "options" => $modelList ?: ["" => __("No AgentTools models configured")],
+                "value" => $selectedEmbeddingModel,
+                "notes" => $modelList
+                    ? __("Select an AgentTools entry for embeddings. This can be different from the chat model and should point to an embeddings-capable endpoint/model.")
+                    : __("Configure at least one suitable model/API key in AgentTools first."),
             ],
         ],
     ],

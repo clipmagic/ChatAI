@@ -83,7 +83,8 @@ Language context is preserved, so relevance is evaluated against the correct lan
 Reindexing is required when:
 - new language content is added,
 - existing translations are updated,
-- templates or selectors affecting multilingual content change.
+- templates affecting multilingual content change,
+- or the curated `chatai-rag.php` output changes.
 
 Reindexing runs per language and should be planned accordingly on larger sites.
 
@@ -97,12 +98,12 @@ When ChatAI behaves unexpectedly on multilingual sites, common causes include:
 
 - missing or incomplete translations,
 - dictionary terms defined only in one language,
-- selectors that include layout text duplicated across languages,
+- overly broad `chatai-rag.php` output that includes duplicated layout text across languages,
 - or assuming fallback language content will be used automatically.
 
 In most cases, improvements come from:
 - reviewing language-specific content coverage,
-- refining selectors,
+- refining `chatai-rag.php`,
 - and ensuring prompts and dictionary entries exist for each language.
 
 ---

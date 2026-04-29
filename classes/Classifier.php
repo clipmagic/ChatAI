@@ -19,6 +19,12 @@ use AllowDynamicProperties;
 class Classifier extends Wire
 {
     protected array $cfgMemo = [];
+
+    /**
+     * @return array
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function getCfg(): array {
         if (!empty($this->cfgMemo)) return $this->cfgMemo;
         $chatai = $this->wire('modules')->get('ChatAI');
@@ -29,6 +35,9 @@ class Classifier extends Wire
     }
 
 
+    /**
+     * @return string[]
+     */
     public static function dictionaryPrefixes(): array
     {
         // These are the *prefixes* used by buildDictionary() via collectLangStrings($cfg, $prefix)
@@ -133,6 +142,10 @@ class Classifier extends Wire
 
     // --- Helpers: config → lists -------------------------------------------------
 
+    /**
+     * @param string $t
+     * @return int
+     */
     protected function wordCount(string $t): int {
         $t = trim($t);
         if ($t === '') return 0;
@@ -142,6 +155,12 @@ class Classifier extends Wire
 
 
     // collect base + key__{langId} strings then return array of strings
+
+    /**
+     * @param array $cfg
+     * @param string $baseKey
+     * @return array
+     */
     protected function collectLangStrings(array $cfg, string $baseKey): array {
         $vals = [];
         if (!empty($cfg[$baseKey]) && is_string($cfg[$baseKey])) $vals[] = $cfg[$baseKey];
@@ -153,12 +172,21 @@ class Classifier extends Wire
     }
 
     // "a,b\nc" → ['a','b','c'] lowercased, trimmed, deduped
+
+    /**
+     * @param array $vals
+     * @return array
+     */
     protected function normMany(array $vals): array {
         $out = [];
         foreach ($vals as $s) $out = array_merge($out, $this->normList($s));
         return array_values(array_unique($out));
     }
 
+    /**
+     * @param string|null $s
+     * @return array
+     */
     protected function normList(?string $s): array {
         if (!$s) return [];
         $parts = preg_split('~[\r\n,]+~', $s, -1, PREG_SPLIT_NO_EMPTY);
@@ -166,6 +194,11 @@ class Classifier extends Wire
         return array_values(array_unique(array_filter($parts, fn($x) => $x !== '')));
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function hasQuestionWord(string $t, array $dict): bool {
         if (str_contains($t, '?')) return true;
         foreach ($dict['question_words_set'] as $w => $_) {
@@ -174,6 +207,11 @@ class Classifier extends Wire
         return false;
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function hasPageSectionWord(string $t, array $dict): bool {
         foreach ($dict['stop_soft_set'] as $w => $_) {
             if (mb_stripos($t, $w) !== false) return true;
@@ -181,6 +219,11 @@ class Classifier extends Wire
         return false;
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function isGreeting(string $t, array $dict): bool {
         foreach ($dict['smalltalk_set'] as $w => $_) {
             if (mb_stripos($t, $w) === 0) return true;
@@ -188,6 +231,11 @@ class Classifier extends Wire
         return false;
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function isMeta(string $t, array $dict): bool {
         foreach ($dict['meta_terms_set'] as $w => $_) {
             if ($w !== '' && mb_stripos($t, $w) !== false) return true;
@@ -195,15 +243,30 @@ class Classifier extends Wire
         return false;
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function isBlockedAction(string $t, array $dict): bool {
         return $this->hitsAny($t, $dict['blocked_action_verbs_set'] ?? []);
     }
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function isInfoAction(string $t, array $dict): bool {
         return $this->hitsAny($t, $dict['info_action_verbs_set'] ?? []);
     }
 
 
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function looksLikeFollowup(string $t, array $dict): bool {
         foreach ($dict['followup_terms_set'] as $w => $_) {
             if (mb_stripos($t, $w) !== false) return true;
@@ -211,15 +274,15 @@ class Classifier extends Wire
         return ($t === '...' || $t === '…');
     }
 
+    /**
+     * @param string $t
+     * @param array $set
+     * @return bool
+     */
     protected function hitsAny(string $t, array $set): bool {
         foreach ($set as $term => $_) {
             if ($term !== '' && mb_stripos($t, $term) !== false) return true;
         }
-        return false;
-    }
-
-    protected function noAccess(string $t, array $set): bool {
-
         return false;
     }
 

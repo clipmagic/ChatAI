@@ -16,6 +16,14 @@ namespace ChatAI\AdminTabs;
 
 class DictionaryTab
 {
+    /**
+     * @param $form
+     * @param $data
+     * @return array
+     * @throws \ProcessWire\Wire404Exception
+     * @throws \ProcessWire\WireException
+     * @throws \ProcessWire\WirePermissionException
+     */
     public function build($form, $data): array
     {
         $m = \ProcessWire\wire('modules');
@@ -246,7 +254,7 @@ class DictionaryTab
         $f = $m->get('InputfieldText');
         $f->attr('name+id', 'no_context_reply');
         $f->label($m->_('Reply'));
-        $value = $data['no_context_reply'] ?? $m->_("Tell me what you’re looking for and I’ll point you in the right direction.");
+        $value = $data['no_context_reply'] ?? $m->_("I’m not sure what to look for yet. Try a topic or a few keywords.");
         $f->val( $value);
         $f->stripTags = true;
         $f->useLanguages = true;

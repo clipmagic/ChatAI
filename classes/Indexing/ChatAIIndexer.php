@@ -1,10 +1,10 @@
 <?php namespace ProcessWire;
 
 /**
- * ChatAIIndexer — calls IndexContentExtractor at index time only.
+ * ChatAIIndexer
  * - Per-page scoped render
- * - Per-page cache
- * - Writes headings + text to your vector pipeline (stubbed below)
+ * - Uses chatai-rag.php as the source of truth for indexed content
+ * - Writes headings + text to the vector pipeline
  */
 require_once __DIR__ . '/HeadingsOnlyExtractor.php';
 
@@ -13,29 +13,6 @@ class ChatAIIndexer extends Wire
     use HeadingsOnlyExtractor;
 
     /** Build or rebuild a single page for one language */
-/*    public function buildForPage(Page $page, int $langId): array
-    {
-        $files = $this->wire('files');
-        $config = $this->wire('config');
-
-        if($files->exists($config->paths->templates . 'chatai-rag.php')) {
-            $html = $files->render('chatai-rag.php', ['page' => $page]);
-        } else {
-            $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
-            $view =  $ragViewPath . 'chatai-rag.php';
-            $html = $files->render($view, ['page' => $page], ['allowedPaths', [$ragViewPath]]);
-        }
-
-        $tt = new WireTextTools();
-        $content = [];
-        $content['text'] = $tt->markupToText($html);
-        $content['heads'] = $this->getPageHeadings($page, $langId);
-        $content['slug']  = $page->name;
-
-        return $content;
-    }*/
-
-
     public function buildForPage(Page $page, int $langId): array
     {
         $files = $this->wire('files');
@@ -106,5 +83,4 @@ class ChatAIIndexer extends Wire
         return $next;
     }
 }
-
 

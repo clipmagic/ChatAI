@@ -59,6 +59,9 @@ class ProcessChatAI extends Process
         return json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     }
 
+    /**
+     * @return void
+     */
     public function init()
     {
         $this->addHookBefore('InputfieldForm::render', $this, 'initValues');
@@ -66,6 +69,12 @@ class ProcessChatAI extends Process
 
     //*** Hooks ***//
 
+    /**
+     * @param HookEvent $event
+     * @return void
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function initValues(HookEvent $event)
     {
         $svc = $this->wire('modules')->get('ChatAI')->promptService();
@@ -106,11 +115,23 @@ class ProcessChatAI extends Process
         $event->removeHook($this);
     }
 
+    /**
+     * @return ChatAI
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function chatAI(): \ProcessWire\ChatAI {
         return $this->wire('modules')->get('ChatAI');
     }
 
     // Tab builders (lazy-loaded or simple new)
+
+    /**
+     * @param array $tab
+     * @return array
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function tabs(array $tab): array
     {
         $user = $this->wire('user');
@@ -141,6 +162,11 @@ class ProcessChatAI extends Process
         return $output;
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function renderKpiSnapshotJson(): string
     {
         $input = $this->wire('input');
@@ -156,6 +182,12 @@ class ProcessChatAI extends Process
         return json_encode($kpis);
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     * @throws WirePermissionException
+     * @throws \DateMalformedStringException
+     */
     protected function renderVolumeDataJson(): string
     {
         $input = $this->wire('input');
@@ -181,6 +213,11 @@ class ProcessChatAI extends Process
         ]);
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function renderInsightsJson(): string
     {
         if (!$this->chatAI()->logger()) {
@@ -258,109 +295,12 @@ class ProcessChatAI extends Process
         return json_encode(['html' => $html]);
     }
 
-/*    protected function renderObslogCsv(): void {
-
-
-        $input   = $this->wire('input');
-
-        $days = (int) $input->get('days') ?: 7;
-        $days = max(1, min($days, 60));
-        $logger = $this->chatAI()->logger();
-
-        if (!$logger) {
-            header('Content-Type: text/plain; charset=utf-8');
-            echo "Observability log is not available.";
-            return;
-        }
-
-        if (!method_exists($logger, 'fetchRange')) {
-            header('Content-Type: text/plain; charset=utf-8');
-            echo "Observability export is not available.";
-            return;
-        }
-
-        $to   = new \DateTime('now');
-        $from = (clone $to)->setTime(0, 0, 0)->modify('-' . ($days - 1) . ' days');
-        $rows = $logger->fetchRange($from, $to);
-
-        $filename = sprintf(
-            'chatai_obslog_last_%dd_%s.csv',
-            $days,
-            date('Ymd_His')
-        );
-
-
-       header('Content-Type: text/csv; charset=utf-8');
-                header('Content-Disposition: attachment; filename="' . $filename . '"');
-                header('Pragma: no-cache');
-                header('Expires: 0');
-
-                $out = fopen('php://output', 'w');
-                if (!$out) {
-                    echo "Failed to open output stream.";
-                    return;
-                }
-
-        // 1) Discover all meta keys across this result set
-        $metaKeys = [];
-        foreach ($rows as $row) {
-            if (empty($row['meta'])) continue;
-            $decoded = json_decode($row['meta'], true);
-            if (!is_array($decoded)) continue;
-            foreach ($decoded as $k => $v) {
-                if (!array_key_exists($k, $metaKeys)) {
-                    $metaKeys[$k] = true;
-                }
-            }
-        }
-        $metaKeys = array_keys($metaKeys);
-        sort($metaKeys); // stable ordering
-
-        // 2) Write header row: base columns + meta columns
-        $baseHeader = ['id', 'created', 'chat_id', 'event_type', 'status', 'model'];
-        $header     = array_merge($baseHeader, $metaKeys);
-        fputcsv($out, $header);
-
-        // 3) Write each row, flattening meta into columns
-        foreach ($rows as $row) {
-            $meta = [];
-            if (!empty($row['meta'])) {
-                $decoded = json_decode($row['meta'], true);
-                if (is_array($decoded)) {
-                    $meta = $decoded;
-                }
-            }
-
-            $line = [
-                $row['id'],
-                $row['created'],
-                $row['chat_id'],
-                $row['event_type'],
-                $row['status'],
-                $row['model'],
-            ];
-
-            foreach ($metaKeys as $k) {
-                $val = $meta[$k] ?? '';
-
-                if (is_bool($val)) {
-                    $val = $val ? '1' : '0';
-                } elseif (is_array($val)) {
-                    // Nested structures should be rare; encode them as JSON
-                    $val = json_encode($val, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                }
-
-                $line[] = $val;
-            }
-
-            fputcsv($out, $line);
-        }
-
-        fclose($out);
-    }*/
-
-
-protected function renderObslogCsv(): void
+    /**
+     * @return void
+     * @throws WireException
+     * @throws WirePermissionException
+     */
+    protected function renderObslogCsv(): void
 {
     $logger = $this->chatAI()->logger();
 
@@ -463,6 +403,11 @@ protected function renderObslogCsv(): void
 }
 
 
+    /**
+     * @param int $retainDays
+     * @return int
+     * @throws \DateMalformedStringException
+     */
     protected function pruneObslogRetainDays(int $retainDays): int
     {
         $retainDays = max(1, (int) $retainDays);
@@ -482,6 +427,10 @@ protected function renderObslogCsv(): void
         return (int) $stmt->rowCount();
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     */
     protected function buildRagReindexSelectorFromPost(): string {
 
         $in = $this->wire('input');
@@ -512,10 +461,21 @@ protected function renderObslogCsv(): void
         return trim($selector);
     }
 
+    /**
+     * @param string $selector
+     * @return string
+     */
     public function ___buildReindexSelector(string $selector): string {
         return $selector;
     }
 
+    /**
+     * @return array|mixed|string|void
+     * @throws Wire404Exception
+     * @throws WireException
+     * @throws WirePermissionException
+     * @throws \DateMalformedStringException
+     */
     public function ___execute()
     {
         if (!$this->wire('user')->hasPermission('chatai')) {
@@ -727,7 +687,14 @@ protected function renderObslogCsv(): void
                 }
 
                 $merged = array_merge($cfg, $values);
+                $previousEmbeddingFingerprint = (string) ($cfg['embedding_fingerprint'] ?? '');
+                $currentEmbeddingFingerprint = $chatAI->currentEmbeddingFingerprint();
+                $merged['embedding_fingerprint'] = $currentEmbeddingFingerprint;
                 $chatAI->promptService()->savePromptSettings($merged);
+
+                if ($previousEmbeddingFingerprint !== '' && $previousEmbeddingFingerprint !== $currentEmbeddingFingerprint) {
+                    $this->warning($this->_('Embedding settings changed. Existing RAG vectors may now be stale. Run a full reindex of the vector database.'));
+                }
 
             } else {
                 $text = "<h3 class='error'>" . $this->_('Your form has errors. Please fix') . "</h3>\n";
@@ -737,12 +704,12 @@ protected function renderObslogCsv(): void
         return $form->render();
     }
 
-    public function addTab($id, $label, $wrapper = null)
-    {
-        $this->tabs[$id] = $label;
-        if($wrapper) $wrapper->addClass('WireTab');
-    }
-
+    /**
+     * @param $form
+     * @return array
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function getValues($form) : array
     {
         $svc = $this->chatAI()->promptService();
@@ -814,7 +781,7 @@ protected function renderObslogCsv(): void
             'deleted'           => 0,
             'errors'            => 0,
             'dry_run'           => (bool) $dryRun,
-            'model'             => (string) ($this->chatAI()->model ?? ''),
+            'model'             => (string) ($chatai->modelClient()->selectedLabel((string) ($chatai->agenttools_embedding_model_id ?? '')) ?: ''),
             'start_id'          => (int) $startId,
             'last_id'           => 0,
             'last_ok_id'        => 0,

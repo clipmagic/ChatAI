@@ -37,11 +37,11 @@ Tests are written from a **user/admin perspective**, not tied to internal implem
 ## TEST 1 – Near-limit warning (Error 10)
 
 **Purpose**  
-Ensure users receive a warning when only one OpenAI-backed message remains.
+Ensure users receive a warning when only one model-backed message remains.
 
 **Action**
 1. Start a new chat
-2. Ask 3 normal questions that trigger OpenAI calls
+2. Ask 3 normal questions that trigger model-backed replies
 
 **Expected**
 - Q1, Q2: normal responses
@@ -65,7 +65,7 @@ Ensure chat stops cleanly once message limit is exceeded.
 
 **Action**
 1. Continue from Test 1
-2. Ask a 4th normal OpenAI-backed question
+2. Ask a 4th normal model-backed question
 
 **Expected**
 - Assistant reply renders (if allowed)
@@ -84,7 +84,7 @@ Pass
 ## TEST 3 – Small talk does not consume message credits
 
 **Purpose**  
-Ensure non-OpenAI paths do not affect message limits.
+Ensure local/non-model paths do not affect message limits.
 
 **Action**
 1. Reset chat
@@ -193,7 +193,7 @@ Pass
 
 ## Notes & Known Design Decisions
 
-- Message limits apply **only** to OpenAI-backed calls
+- Message limits apply **only** to model-backed calls
 - Cutoffs are treated as hard UX stops
 - Near-limit warnings are informational only and do not block input
 - Frontend reset clears:

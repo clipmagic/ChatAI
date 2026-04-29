@@ -447,7 +447,7 @@ This approach helps to:
 - control costs,
 - and keep responses focused on your site’s content.
 
-The index is built and maintained by the ChatAI indexer, which processes eligible pages based on the template, selector, and exclusion rules defined below.
+The index is built and maintained by the ChatAI indexer, which processes eligible pages based on the template rules defined below and the content rendered by `chatai-rag.php`.
 
 ---
 
@@ -492,30 +492,6 @@ This helps keep answers focused and avoids overwhelming users.
 Defines the approximate maximum length of responses.
 
 This value guides response brevity but works in combination with global response limits defined in the module configuration.
-
----
-
-#### HTML Selectors
-
-These fields control which parts of a page’s markup are considered when extracting content.
-
----
-
-##### Selectors to Include
-
-Defines CSS selectors that identify content-rich areas of a page.
-
-Only content within these selectors is considered when building the vector database.
-
-This allows irrelevant layout or navigation markup to be ignored.
-
----
-
-##### Exclude Content Within These Selectors
-
-Defines CSS selectors that should be excluded from content extraction.
-
-This is commonly used to remove headers, footers, navigation, forms, or other non-content elements.
 
 ---
 

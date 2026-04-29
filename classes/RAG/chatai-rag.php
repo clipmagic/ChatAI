@@ -28,6 +28,22 @@ $skip = [
     // add any others you never want in RAG context
 ];
 
+/*
+Template-specific skip example:
+
+$skipByTemplate = [
+    'basic-page' => ['internal_notes'],
+    'product' => ['spec_sheet_private', 'supplier_notes'],
+];
+
+foreach($skipByTemplate[$page->template->name] ?? [] as $fieldName) {
+    $skip[] = $fieldName;
+}
+
+Use this when the same field is safe on one template but should not be indexed on
+another. Site-specific curation belongs here in /site/templates/chatai-rag.php.
+*/
+
 // Collect fields in template order, keeping title/headline first
 $renderQueue = [];
 

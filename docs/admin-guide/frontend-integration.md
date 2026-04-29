@@ -359,9 +359,9 @@ When ChatAI determines that site content is relevant to a user’s question, it 
 
 Instead, selected content is passed through `chat-rag.php`, which:
 
-- renders excerpts in a predictable, text-oriented format,
-- preserves safe and readable markup where appropriate,
-- and avoids including full layouts, navigation, or unrelated page structure.
+- renders a curated, text-oriented version of the page,
+- allows site developers to decide what field content is safe for indexing,
+- and avoids depending on brittle layout or selector-based DOM extraction.
 
 This keeps responses focused and suitable for display inside chat messages.
 
@@ -381,9 +381,9 @@ No manual setup is required.
 
 ### What Is Rendered
 
-`chat-rag.php` renders **excerpts**, not full pages.
+`chat-rag.php` renders **curated indexing content**, not full pages.
 
-An excerpt typically includes:
+A typical default output includes:
 
 - prioritised title or headline text,
 - selected body content extracted from eligible fields,
@@ -391,6 +391,8 @@ An excerpt typically includes:
 - and minimal markup suitable for inline display.
 
 The intent is to provide enough context to support an answer, not to reproduce the original page.
+
+For sites that need stricter control, copy the default module template to `/site/templates/chatai-rag.php` and curate it there. This is also the correct place to skip fields that should not be added to the vector database, including template-specific exceptions.
 
 ---
 
@@ -494,7 +496,7 @@ Sites with complex layouts or specialised field types may require additional han
 Developers can adapt RAG rendering by:
 
 - modifying the site-level `chat-rag.php` template,
-- refining content scope and selectors in **Prompt → Content Guidance**,
+- refining content scope in `chat-rag.php`,
 - or introducing site-specific logic via hooks.
 
 For most sites, improving excerpt quality is best achieved by adjusting content selection and indexing rules rather than changing this template.

@@ -1,8 +1,8 @@
 ## 5. ChatAI Module Configuration 
 
-### 5.1 OpenAI Settings
+### 5.1 Model Settings
 
-This section covers the settings used to connect ChatAI to the OpenAI API and control how requests and responses are handled at a technical level.
+This section covers the settings used to connect ChatAI to the configured AgentTools model and control how requests and responses are handled at a technical level.
 
 These settings apply site-wide and affect all ChatAI interactions, regardless of where or how the chatbot is used.
 
@@ -10,21 +10,17 @@ They are typically configured once and changed infrequently.
 
 ---
 
-#### OpenAI API Key
+#### AgentTools Model
 
-The OpenAI API key is required for ChatAI to communicate with the OpenAI service.
+ChatAI no longer manages chat-model API keys directly.
 
-- This key is issued by OpenAI and is associated with your OpenAI account.
-- It is used for all requests sent by ChatAI.
-- Without a valid API key, ChatAI cannot generate responses.
-
-If the API key is missing or invalid, ChatAI will fail gracefully and report the issue in diagnostics.
+- Chat models are configured in AgentTools.
+- ChatAI stores the selected AgentTools model and uses it for model-backed replies.
+- If the selected AgentTools model is removed or no longer available, ChatAI shows a warning and waits for the configuration to be re-saved.
 
 ---
 
-#### OpenAI Model
-
-This setting determines which OpenAI model is used to generate responses.
+This setting determines which configured AgentTools model is used to generate responses.
 
 Different models vary in:
 - response quality,
@@ -32,7 +28,7 @@ Different models vary in:
 - latency,
 - and cost.
 
-Changing the model affects all ChatAI responses across the site.  
+Changing the selected model affects all ChatAI responses across the site.  
 Model selection is a trade-off between quality, performance, and cost.
 
 ---
@@ -64,7 +60,7 @@ Increasing reasoning effort can improve response quality for complex questions b
 
 This setting defines the maximum number of tokens ChatAI may use for a single response.
 
-Tokens are the units used by the OpenAI API to measure text length.  
+Tokens are the units used by the model API to measure text length.  
 Both prompts and responses consume tokens, and token usage directly affects API cost.
 
 This limit helps to:
@@ -93,7 +89,7 @@ Once the limit is reached, ChatAI will stop accepting new questions for that con
 
 This section controls how ChatAI responds when prohibited terms are detected in user input.
 
-Blacklist and blocking settings apply site-wide and are enforced **before** a request is sent to the OpenAI API.
+Blacklist and blocking settings apply site-wide and are enforced **before** a request is sent to the configured model API.
 
 They are designed to provide a simple, predictable safeguard against misuse.
 
@@ -118,6 +114,20 @@ This setting controls **how many violations are tolerated**, not which terms are
 Blacklist terms are defined in the ChatAI process module under **Setup / Settings → ChatAI**, using a multi-language field on the **Prompt** tab.
 
 This makes blacklist behaviour:
+
+---
+
+### 5.3 RAG Embeddings
+
+RAG embeddings are configured separately from the chat model.
+
+- `Embedding API Key`
+- `Embedding Endpoint`
+- `Embedding Model`
+
+The default supported path is OpenAI-compatible embeddings using `text-embedding-3-small`.
+
+Changing any embedding setting requires a full vector reindex. Existing vectors may be stale after an embedding change.
 - explicit,
 - site-controlled,
 - and independent of any filtering performed by the OpenAI service.

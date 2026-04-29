@@ -6,6 +6,9 @@
 - Keep ChatAI prompt, RAG context, hooks, message limits, observability logging, and frontend response handling inside ChatAI.
 - Keep the existing OpenAI RAG embedding key setting for the current RAG indexer; embedding provider changes are deferred.
 - Update module metadata and summaries to describe AgentTools-backed model configuration.
+- Add first-pass configurable RAG embedding settings for model, endpoint, and API key, with defaults matching the existing OpenAI embedding path.
+- Move the embedding request behind a hookable `ChatAI::embedText()` method so advanced/site-specific integrations can override the built-in OpenAI-compatible behavior.
+- Warn admins that changing embedding settings may make existing RAG vectors stale and requires a full reindex.
 
 ##0.0.1Alpha
 - Initial Proof of Concept

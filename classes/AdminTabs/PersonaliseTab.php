@@ -20,6 +20,14 @@ use ProcessWire\Languages;
 
 class PersonaliseTab
 {
+    /**
+     * @param $form
+     * @param $data
+     * @return array
+     * @throws ProcessWire\Wire404Exception
+     * @throws ProcessWire\WireException
+     * @throws ProcessWire\WirePermissionException
+     */
     public function build($form, $data): array
     {
 

@@ -6,6 +6,11 @@ class ChatAIPromptService extends Wire {
 
     protected $promptMemo = null;
 
+    /**
+     * @param bool $force
+     * @return array
+     * @throws WireException
+     */
     public function loadPromptSettings(bool $force = false): array
     {
         $cache = $this->wire('cache');
@@ -36,6 +41,11 @@ class ChatAIPromptService extends Wire {
     }
 
 
+    /**
+     * @param string $name
+     * @return string
+     * @throws WireException
+     */
     public function getLanguageVal(string $name): string {
         $cfg = $this->loadPromptSettings();
         if(empty($cfg)) return '';
@@ -54,24 +64,70 @@ class ChatAIPromptService extends Wire {
         return (string) ($cfg[$name] ?? '');
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getIntro(): string {
         $botname = $this->getLanguageVal('botname');
         $botintro = $this->getLanguageVal('botintro');
         return str_ireplace('{botname}', $botname, (string) $botintro);
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getPlaceholder(): string { return $this->getLanguageVal('input_placeholder'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getButtonText(): string { return $this->getLanguageVal('submit_text'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getResetText(): string { return $this->getLanguageVal('reset_text'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getThinkingText(): string { return $this->getLanguageVal('thinking_text'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getDisclaimerText(): string { return $this->getLanguageVal('disclaimer_text'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getFooterText(): string { return $this->getLanguageVal('footer_text'); }
+
+    /**
+     * @return string
+     * @throws WireException
+     */
     public function getBotName(): string { return $this->getLanguageVal('botname'); }
 
+    /**
+     * @return string
+     */
     public function getPrompt(): string {
         return $this->buildPrompt();
     }
 
+    /**
+     * @return string
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     protected function buildPrompt(): string
     {
         $modules = $this->wire('modules');
@@ -221,6 +277,11 @@ class ChatAIPromptService extends Wire {
         return $prompt;
     }
 
+    /**
+     * @param string $path
+     * @return string
+     * @throws WireException
+     */
     public function getWidget(string $path): string {
         $wire = $this->wire();
         $files = $wire->files;
@@ -245,6 +306,11 @@ class ChatAIPromptService extends Wire {
     }
 
 
+    /**
+     * @param string $message
+     * @return bool
+     * @throws WireException
+     */
     public function isBlacklistTerm(string $message): bool {
         $sanitizer = $this->wire('sanitizer');
         $cfg = $this->loadPromptSettings();
@@ -272,6 +338,12 @@ class ChatAIPromptService extends Wire {
         return false;
     }
 
+    /**
+     * @param array $cfg
+     * @return bool
+     * @throws WireException
+     * @throws WirePermissionException
+     */
     public function savePromptSettings(array $cfg): bool
     {
         $chatai = $this->wire('modules')->get('ChatAI');

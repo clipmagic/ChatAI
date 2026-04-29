@@ -127,6 +127,12 @@ class ChatAIObsLog extends Wire
         return $out;
     }
 
+    /**
+     * @param int $days
+     * @return array
+     * @throws WireException
+     * @throws \DateMalformedStringException
+     */
     public function fetchDailyVolume(int $days = 7): array
     {
         $db   = $this->wire('database');
@@ -495,6 +501,13 @@ class ChatAIObsLog extends Wire
         ];
     }
 
+    /**
+     * @param \DateTimeInterface $from
+     * @param \DateTimeInterface $to
+     * @param string $order
+     * @return array
+     * @throws WireException
+     */
     public function fetchRange(\DateTimeInterface $from, \DateTimeInterface $to, string $order = 'ASC'): array
     {
         $db = $this->wire('database');
@@ -526,6 +539,11 @@ class ChatAIObsLog extends Wire
         }
     }
 
+    /**
+     * @param $result
+     * @param array $meta
+     * @return void
+     */
     public function logFromResult($result, array $meta = []): void
     {
         $result = $this->normaliseResult($result);
@@ -558,6 +576,10 @@ class ChatAIObsLog extends Wire
         ]);
     }
 
+    /**
+     * @param $result
+     * @return array
+     */
     protected function normaliseResult($result): array
     {
         if (is_array($result)) return $result;

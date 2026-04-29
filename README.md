@@ -24,7 +24,7 @@ Chat generation uses models configured in AgentTools. Configure provider credent
 
 ChatAI uses AgentTools as the model registry for chat responses. AgentTools owns API keys and provider endpoints. ChatAI stores only the selected AgentTools model id and generation controls such as max tokens, timeout, verbosity, and reasoning effort.
 
-The current RAG embedding layer is unchanged. It still uses OpenAI `text-embedding-3-small` through the OpenAI RAG embedding API key setting. Provider-agnostic embeddings and vector metadata are deferred to a later change.
+The current RAG embedding layer now has first-pass configuration for embedding model, endpoint, and API key, with defaults matching the existing OpenAI setup. The built-in implementation still expects an OpenAI-compatible embedding response shape, and advanced/custom embedding integrations are site-specific. Changing embedding settings requires a full vector reindex.
 
 ## Accessibility & Call-to-Action (CTA) Guidelines
 

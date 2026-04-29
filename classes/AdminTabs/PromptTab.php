@@ -20,6 +20,9 @@ use ProcessWire\Wire;
 
 class PromptTab
 {
+    /**
+     * @var array|string[]
+     */
     public static array $adminTemplates = [
         "admin",
         "language",
@@ -28,6 +31,14 @@ class PromptTab
         "role",
     ];
 
+    /**
+     * @param $form
+     * @param $data
+     * @return array
+     * @throws \ProcessWire\Wire404Exception
+     * @throws \ProcessWire\WireException
+     * @throws \ProcessWire\WirePermissionException
+     */
     public function build($form, $data): array
     {
         $m = \ProcessWire\Wire("modules");
@@ -183,46 +194,6 @@ class PromptTab
 
         $inputfields->add($fieldset);
 
-        $fieldset = $m->get("InputfieldFieldset");
-        $fieldset->attr("name+id", "rag_selectors");
-        $fieldset->label($m->_("HTML selectors"));
-
-        // Include HTML selectors
-        $f = $m->get("InputfieldTextarea");
-        $f->attr("name+id", "rag_candidate_selectors");
-        $f->label($m->_("Selectors to include"));
-        $f->notes(
-            $m->_(
-                "Comma separated list of selectors with high-value content to use when building dictionary",
-            ),
-        );
-        $value =
-            $data["rag_candidate_selectors"] ??
-            "article, [role='main'], .content, .page-content, .entry-content, .post-content, #content";
-        $f->val($value);
-        $f->stripTags = true;
-        $f->columnWidth(50);
-        $fieldset->add($f);
-
-        // Exclude HTML selectors
-        $f = $m->get("InputfieldTextarea");
-        $f->attr("name+id", "rag_exclude_selectors");
-        $f->label($m->_("Exclude content within these selectors"));
-        $f->notes(
-            $m->_(
-                "Comma separated list of selectors to exclude when building dictionary",
-            ),
-        );
-        $value =
-            $data["rag_exclude_selectors"] ??
-            "#chatbot-toggle, #chatbot-dialog, header, footer, nav, aside, form[role='search'], [role='banner'], [role='navigation'], [role='contentinfo'], .sidebar, .breadcrumbs, .menu, .mega-menu, .toolbar, .cookie, .consent, .newsletter, .promo, .ad, .related, .share, .social, #header, #footer";
-        $f->val($value);
-        $f->stripTags = true;
-        $f->columnWidth(50);
-        $fieldset->add($f);
-
-        $inputfields->add($fieldset);
-
         // Prompt preview
         $markUp = $m->get("InputfieldMarkup");
         $markUp->attr("name+id", "prompt_preview");
@@ -265,6 +236,9 @@ class PromptTab
         return $output;
     }
 
+    /**
+     * @return array
+     */
     public function getTemplateOptions()
     {
         $templatesOptions = [];
