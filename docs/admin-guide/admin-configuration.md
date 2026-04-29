@@ -12,10 +12,10 @@ This separation follows standard ProcessWire conventions and helps prevent misco
 ChatAI is configured through two distinct admin locations:
 
 - **Modules → ChatAI**  
-  Defines global and technical settings such as API credentials, model selection, and response limits.  
+  Defines global and technical settings such as AgentTools model selection, frontend file paths, permissions, and response limits.  
   These settings are typically configured once.
 
-- **Setup / Settings → ChatAI**  
+- **Setup → ChatAI**  
   Provides the ChatAI process interface used to control chatbot behaviour, prompts, limits, and diagnostics.  
   This area is used for ongoing operation and tuning.
 
@@ -25,4 +25,4 @@ Detailed configuration guidance is covered in the following sections:
   Covers all settings available under **Modules → ChatAI**.
 
 - **ChatAI Behaviour Configuration (ProcessChatAI)**  
-  Covers the Dashboard, Personalise, Prompt, and Dictionary tabs available under **Setup / Settings → ChatAI**.
+  Covers the Dashboard, Personalise, Prompt, and Dictionary tabs available under **Setup > ChatAI**.

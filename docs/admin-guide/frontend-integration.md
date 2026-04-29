@@ -14,6 +14,8 @@ Best practice is to copy the default widget, JavaScript, and CSS files into your
 
 This avoids editing module files directly, which may be overwritten during upgrades.
 
+After copying the files, update the corresponding paths in **Modules > ChatAI** so ChatAI loads your custom widget, JavaScript, and CSS files instead of the module defaults.
+
 Example target location for the widget:
 
 - `/site/templates/chatai-widget.php`
@@ -147,31 +149,19 @@ If unused, it can remain empty. If removed, any JS or hook that targets it will 
 
 ---
 
-### 7.8 Common Customisation Pitfalls
-
-- Removing or renaming required IDs, causing JavaScript selectors to fail
-- Removing the message container (`#chatbot-messages`), preventing replies from rendering
-- Changing the input element type or removing `required`, causing inconsistent submit behaviour
-- Removing the status region, reducing accessible feedback during processing
-- Editing module-supplied widget/JS/CSS files directly, then losing changes on upgrade
-
----
-
-### 7.9 Styling Contract and Customisation
+### 7.8 Styling Contract and Customisation
 
 ChatAI’s default CSS is designed to be fully replaceable while relying on a small, stable set of class names applied by the widget and JavaScript.
 
-Developers are free to provide their own CSS, provided the required class names are retained.
+Developers may use their own CSS as long as the required class names are retained.
 
 ---
 
 #### CSS Variables
 
-The default stylesheet defines a set of CSS custom properties (variables) for colours, spacing, typography, and layout.
+The default stylesheet defines CSS custom properties for colours, spacing, typography, and layout.
 
-These variables provide a simple way to theme the chatbot without modifying structural styles.
-
-Custom CSS may override these variables to adapt ChatAI to site branding.
+You may override these to adapt ChatAI to site branding without changing structural styles.
 
 ---
 
@@ -192,8 +182,6 @@ The following class names are used as structural or behavioural hooks and should
 - `.chatbot-status-visible`
 - `.chatbot-status-sr`
 - `.chatbot-footer`
-
-Removing or renaming these classes may result in broken layout, missing states, or inaccessible behaviour.
 
 ---
 
@@ -221,21 +209,6 @@ The default CSS includes:
 - reduced-motion handling via `prefers-reduced-motion`,
 - and RTL support for message alignment.
 
-If replacing the default CSS, ensure equivalent accessibility considerations are preserved.
-
----
-
-#### Safe Customisation Guidelines
-
-When customising styles:
-
-- You may add additional classes, wrappers, or data attributes freely.
-- You may restructure markup, provided required IDs and class names remain intact.
-- Avoid targeting elements solely by tag name; prefer class-based selectors.
-- Do not rely on internal DOM order beyond what is documented.
-
-For upgrade safety, do not edit the default CSS file shipped with the module.  
-Instead, copy it to a site-managed location and reference it via the module configuration.
 
 ---
 
@@ -267,7 +240,7 @@ No frontend output is injected automatically.
 
 The `chatai-api.php` template provides the server-side endpoint used by ChatAI to process chat requests.
 
-This template is created automatically during installation, along with a corresponding page. Together, they act as the conduit between the frontend chatbot and the OpenAI API.
+This template is created automatically during installation, along with a corresponding page. Together, they act as the conduit between the frontend chatbot and the configured model provider.
 
 ---
 
@@ -278,7 +251,7 @@ The `chatai-api.php` template:
 - receives chat requests from the frontend JavaScript,
 - validates input and session state,
 - applies limits and safeguards,
-- forwards approved requests to OpenAI,
+- forwards approved requests to the selected model API,
 - and returns structured responses to the frontend.
 
 This template does not render visible page content and is intended to be accessed programmatically.
@@ -290,7 +263,7 @@ This template does not render visible page content and is intended to be accesse
 During installation, ChatAI:
 
 - creates the `chatai-api.php` template in `site/templates`,
-- creates a page using this template,
+- creates a page using this template with **published** and **hidden** statuses,
 - and configures it as the internal endpoint for all chat requests.
 
 No manual setup is required.
@@ -323,19 +296,6 @@ Customisation is typically handled through:
 - hooks and extension points,
 - or frontend rendering changes.
 
-If this template is changed, ensure that:
-- request handling logic remains intact,
-- response formats are preserved,
-- and no output is sent unintentionally.
-
----
-
-### Do Not Remove
-
-Removing or restricting access to the page using this template will prevent the chatbot from functioning.
-
-If the endpoint is unavailable, frontend requests will fail and no responses will be generated.
-
 ---
 
 ### Compatibility Notes
@@ -345,168 +305,17 @@ The `chatai-api.php` endpoint is implemented as a standard ProcessWire template.
 It can be integrated with alternative routing or API layers, such as AppAPI, if required. Configuration of AppAPI or other routing approaches is outside the scope of this documentation and is left to the site developer.
 
 
-## chat-rag.php
+## chatai-rag.php
 
-The chat-rag.php template renders text-first content excerpts used by ChatAI during Retrieval-Augmented Generation (RAG), providing a controlled and predictable rendering layer for chatbot responses.
+`chatai-rag.php` is not part of the frontend widget contract.
 
-This template is created automatically during installation and is not intended to be visited directly by site visitors.
+It is the indexing view used to curate what site content enters the vector database for content lookup.
 
----
+For details on:
 
-### Role in ChatAI
+- where that file lives,
+- how to override its path,
+- what it renders,
+- and how it affects indexed content,
 
-When ChatAI determines that site content is relevant to a user’s question, it does not inject raw page output into the response.
-
-Instead, selected content is passed through `chat-rag.php`, which:
-
-- renders a curated, text-oriented version of the page,
-- allows site developers to decide what field content is safe for indexing,
-- and avoids depending on brittle layout or selector-based DOM extraction.
-
-This keeps responses focused and suitable for display inside chat messages.
-
----
-
-### Installation Behaviour
-
-During installation, ChatAI:
-
-- creates a `chat-rag.php` template in `site/templates`,
-- creates a corresponding page using this template,
-- and uses it as the standard renderer for RAG excerpts.
-
-No manual setup is required.
-
----
-
-### What Is Rendered
-
-`chat-rag.php` renders **curated indexing content**, not full pages.
-
-A typical default output includes:
-
-- prioritised title or headline text,
-- selected body content extracted from eligible fields,
-- optional descriptive metadata (for example image captions),
-- and minimal markup suitable for inline display.
-
-The intent is to provide enough context to support an answer, not to reproduce the original page.
-
-For sites that need stricter control, copy the default module template to `/site/templates/chatai-rag.php` and curate it there. This is also the correct place to skip fields that should not be added to the vector database, including template-specific exceptions.
-
----
-
-### Field Types Handled by Default
-
-The default `chat-rag.php` template is designed to handle a broad set of commonly used ProcessWire field types, with an emphasis on text-first content.
-
-#### Text-Based Fields
-
-Standard text fields are rendered using ProcessWire’s normal rendering logic, including:
-
-- Text
-- Textarea
-- CKEditor / TinyMCE (RTE)
-
-Rendered markup is later normalised to plain text by the RAG indexer.
-
----
-
-#### Title and Headline Fields
-
-If present, the following fields are prioritised and rendered first:
-
-- `title`
-- `headline`
-
-This ensures that primary page context is indexed before supporting content.
-
----
-
-#### Repeater and RepeaterMatrix
-
-Repeater and RepeaterMatrix fields are supported.
-
-For each repeater item:
-
-- subfields are iterated in template order,
-- formatted output via `render()` is preferred where available,
-- raw values are used as a fallback if rendering fails.
-
-This allows structured content blocks to contribute meaningful text without relying on layout-specific markup.
-
----
-
-#### Page Reference Fields
-
-Page reference fields are handled in a simplified, text-oriented way.
-
-When encountered:
-
-- referenced pages are iterated,
-- page titles are extracted,
-- complex relationships are intentionally reduced to readable labels.
-
-This avoids unintentionally pulling full page bodies into the index.
-
----
-
-#### Image and File Fields
-
-Image and file fields are supported in a descriptive context only.
-
-Where available, the following metadata is extracted:
-
-- image descriptions
-- image notes
-- file descriptions
-- file notes
-
-Binary content itself is not indexed.
-
----
-
-#### Generic Fallback Rendering
-
-Any field not explicitly handled falls back to generic rendering:
-
-- `render()` is used where possible,
-- raw values are used as a final fallback.
-
-This allows most custom or less common field types to contribute text without breaking the indexing process.
-
----
-
-### Design Intent
-
-The default renderer is intentionally conservative.
-
-It is designed to:
-
-- extract meaningful text,
-- minimise layout noise,
-- and behave predictably across a wide range of sites.
-
----
-
-### Customisation and Extension
-
-Sites with complex layouts or specialised field types may require additional handling.
-
-Developers can adapt RAG rendering by:
-
-- modifying the site-level `chat-rag.php` template,
-- refining content scope in `chat-rag.php`,
-- or introducing site-specific logic via hooks.
-
-For most sites, improving excerpt quality is best achieved by adjusting content selection and indexing rules rather than changing this template.
-
-Developers are encouraged to share approaches for handling complex content structures with the ProcessWire community.
-
----
-
-### Important Notes
-
-- The `chat-rag.php` template is part of ChatAI’s core RAG pipeline.
-- Removing or breaking this template or its associated page may prevent ChatAI from presenting indexed excerpts correctly.
-- If RAG rendering fails, responses may lose supporting context or degrade in relevance.
+see **Content and RAG Management**.

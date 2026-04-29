@@ -4,7 +4,7 @@ This guide explains how ChatAI behaves on multilingual ProcessWire sites and wha
 
 It focuses on **how language affects indexing, retrieval, and responses**, not on general multilingual site setup.
 
-If you are new to how ChatAI assembles responses from site content, it may be helpful to first read **The Anatomy of a Chatbot**, which provides a conceptual overview.
+If you are new to how ChatAI assembles responses from site content, it may be helpful to first read **How ChatAI Works**, which provides a conceptual overview.
 
 ---
 
@@ -34,6 +34,8 @@ This means:
 If a page exists in multiple languages, each version is indexed using the content available for that language.
 
 If a page does not have content in a given language, it will not meaningfully contribute to the index for that language.
+
+If a page is disabled in a given language, that language version is not indexed.
 
 ---
 
@@ -84,11 +86,11 @@ Reindexing is required when:
 - new language content is added,
 - existing translations are updated,
 - templates affecting multilingual content change,
-- or the curated `chatai-rag.php` output changes.
+- or the configured `chatai-rag.php` output changes.
 
-Reindexing runs per language and should be planned accordingly on larger sites.
+Reindexing runs page by page. On multilingual sites, each selected page is indexed in every enabled language it has.
 
-Batch size and start ID controls can be used to manage load when rebuilding indexes for multiple languages.
+Batch size and start ID controls can be used to manage load by limiting how many pages are processed in one run.
 
 ---
 
@@ -98,7 +100,7 @@ When ChatAI behaves unexpectedly on multilingual sites, common causes include:
 
 - missing or incomplete translations,
 - dictionary terms defined only in one language,
-- overly broad `chatai-rag.php` output that includes duplicated layout text across languages,
+- overly broad configured `chatai-rag.php` output that includes duplicated layout text across languages,
 - or assuming fallback language content will be used automatically.
 
 In most cases, improvements come from:

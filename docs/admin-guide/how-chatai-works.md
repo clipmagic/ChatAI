@@ -1,7 +1,6 @@
 ## 2. How ChatAI Works (High-Level Overview)
 
-This section explains how ChatAI operates at a conceptual level.  
-It is intended to provide orientation, not implementation detail.
+This section explains how ChatAI operates at a conceptual level. It is intended to provide orientation, not implementation detail.
 
 It outlines why certain configuration options exist and how the pieces fit together.
 
@@ -13,7 +12,7 @@ At a high level, ChatAI is a **server-mediated AI assistant** that sits between:
 
 - a user interacting with your site,
 - your ProcessWire content and configuration,
-- and the OpenAI API.
+- and the configured model provider.
 
 ChatAI does not expose the AI model directly to the browser.  
 All requests are handled server-side and are shaped, limited, and contextualised before a response is returned.
@@ -42,7 +41,7 @@ A typical ChatAI interaction follows this sequence:
     - site configuration
     - selected site content defined in the ChatAI configuration
 4. The request is evaluated against limits and safeguards.
-5. A prompt is constructed and sent to the AI model.
+5. A prompt/request is constructed and sent to the selected model.
 6. The model returns a response.
 7. ChatAI processes the response before returning it to the frontend.
 
@@ -71,7 +70,7 @@ Rather than sending every request without constraint, ChatAI can:
 - and provide clear feedback when limits are reached.
 
 These controls help to:
-- manage API usage and costs,
+- manage model API usage and costs,
 - maintain consistent response quality,
 - and avoid degraded performance under load.
 

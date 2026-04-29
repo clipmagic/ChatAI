@@ -43,6 +43,12 @@ Verbosity controls how detailed ChatAI responses are.
 Verbosity works in combination with prompt configuration and response limits.  
 It does not guarantee a specific response length but influences how much detail the model attempts to provide.
 
+This setting is **model and endpoint dependent**.
+
+- It is passed through AgentTools when the selected provider/endpoint supports it.
+- It is currently most relevant on the OpenAI Responses API path.
+- Unsupported models may ignore it without failing.
+
 ---
 
 #### Reasoning Effort
@@ -53,6 +59,12 @@ Reasoning effort controls how much effort the model applies when generating a re
 - Lower values favour faster, more direct responses.
 
 Increasing reasoning effort can improve response quality for complex questions but may increase response time and cost.
+
+This setting is also **model and endpoint dependent**.
+
+- It is passed through AgentTools when supported.
+- Different providers or endpoint families may support different parameter names or accepted values.
+- Unsupported models may ignore it without failing.
 
 ---
 
@@ -68,7 +80,7 @@ This limit helps to:
 - control usage costs,
 - and ensure predictable behaviour.
 
-If a response would exceed the configured limit, ChatAI will shorten it and provide clear feedback rather than failing.
+ChatAI passes this setting through AgentTools using the parameter expected by the selected model/endpoint family where that mapping is known.
 
 ---
 
@@ -111,34 +123,20 @@ This setting controls **how many violations are tolerated**, not which terms are
 
 #### Source of Blacklist Terms
 
-Blacklist terms are defined in the ChatAI process module under **Setup / Settings → ChatAI**, using a multi-language field on the **Prompt** tab.
+Blacklist terms are defined in the ChatAI process module under **Setup > ChatAI**, using a multi-language field on the **Prompt** tab.
 
 This makes blacklist behaviour:
-
----
-
-### 5.3 RAG Embeddings
-
-RAG embeddings are configured separately from the chat model.
-
-- `Embedding API Key`
-- `Embedding Endpoint`
-- `Embedding Model`
-
-The default supported path is OpenAI-compatible embeddings using `text-embedding-3-small`.
-
-Changing any embedding setting requires a full vector reindex. Existing vectors may be stale after an embedding change.
 - explicit,
 - site-controlled,
-- and independent of any filtering performed by the OpenAI service.
+- and independent of any filtering performed by the selected LLM provider.
 
-ChatAI does not rely on OpenAI-provided blacklists for this functionality.
+ChatAI does not rely on provider-side blacklists for this functionality.
 
 ---
 
 #### Request Handling
 
-Messages containing blacklisted terms are **not sent to the OpenAI API**.
+Messages containing blacklisted terms are **not sent to the selected model API**.
 
 Detection and blocking occur entirely within ChatAI before any external request is made.  
 This prevents unnecessary API usage and ensures prohibited content is handled locally.
@@ -170,7 +168,38 @@ The default value is intentionally conservative and can be adjusted based on sit
 
 ---
 
-### 5.3 Roles and Access Control
+### 5.3 RAG Embeddings
+
+RAG embeddings are configured separately from the chat model.
+
+- ChatAI stores a separate **AgentTools embedding model** selection.
+- The embedding entry can be different from the chat model entry.
+- The selected AgentTools entry should point to an **embeddings-capable** model and endpoint.
+
+For example, an OpenAI-compatible embedding entry might use:
+
+- model: `text-embedding-3-small`
+- endpoint: `https://api.openai.com/v1/embeddings`
+
+ChatAI uses that AgentTools entry for:
+
+- embedding API key
+- embedding endpoint
+- embedding model
+
+This keeps chat and embeddings under the same AgentTools-managed credential and endpoint registry while still allowing them to use different entries.
+
+#### Changing Embedding Settings
+
+Changing the selected embedding entry requires a full vector reindex.
+
+Existing vectors may be stale after an embedding change because vectors from different embedding models should not be mixed.
+
+ChatAI warns administrators when the embedding configuration fingerprint changes, but the current implementation does not hard-block mixed old/new vectors automatically.
+
+---
+
+### 5.4 Roles and Access Control
 
 This section controls which ProcessWire roles are allowed to access and modify ChatAI behaviour through the ChatAI process module.
 
@@ -180,7 +209,7 @@ These settings affect **administrative access**, not frontend placement or visib
 
 #### Access to the ChatAI Admin Screens
 
-Access to the ChatAI process module under **Setup / Settings → ChatAI** is controlled by the ProcessWire permission:
+Access to the ChatAI process module under **Setup > ChatAI** is controlled by the ProcessWire permission:
 
 - `chatai`
 
@@ -196,9 +225,9 @@ ChatAI does not manage roles internally. Access control is handled entirely thro
 
 ---
 
-### 5.4 File and Asset Paths
+### 5.5 File and Asset Paths
 
-This section defines the filesystem paths used by ChatAI for its frontend widget, JavaScript, and CSS assets.
+This section defines the filesystem paths used by ChatAI for its frontend widget, JavaScript, CSS, and indexing view.
 
 These settings allow developers to customise the chatbot’s appearance and behaviour **without modifying the default files shipped with the module**.
 
@@ -208,7 +237,7 @@ Custom files are preserved across module upgrades.
 
 #### Recommended Approach
 
-Best practice is to copy the default widget, JavaScript, or CSS files provided by ChatAI into your preferred site location and reference those copies via the path settings.
+Best practice is to copy the default widget, JavaScript, CSS, or indexing view files provided by ChatAI into your preferred site location and reference those copies via the path settings.
 
 For example: /site/templates/chatai-widget.php
 
@@ -251,9 +280,27 @@ Providing a custom CSS file allows complete visual control without modifying the
 
 ---
 
+#### Path to Indexing View File
+
+This setting defines the path to the `chatai-rag.php` view used to render content for vector indexing.
+
+By default, ChatAI uses the module copy:
+
+- `/site/modules/ChatAI/classes/RAG/chatai-rag.php`
+
+Developers can override this path to use a site-managed copy instead.
+
+This is the correct file to customise when you need to:
+
+- curate which field content is included in the vector database,
+- skip fields that should not be indexed,
+- or apply template-specific indexing exceptions.
+
+---
+
 #### Upgrade Safety
 
-The default widget, JavaScript, and CSS files provided by ChatAI may be updated during module upgrades.
+The default widget, JavaScript, CSS, and indexing view files provided by ChatAI may be updated during module upgrades.
 
 Custom files referenced via these path settings are **not** modified or overwritten during upgrades.
 

@@ -9,9 +9,9 @@ This section describes how to install ChatAI using the standard ProcessWire modu
 Before installing ChatAI, ensure the following:
 
 - A working ProcessWire installation.
-- An OpenAI API key, available before first use.  
-  API keys can be created via your OpenAI account:  
-  https://platform.openai.com/api-keys
+- AgentTools is installed and available.
+- A chat-capable model entry will be configured in AgentTools.
+- An embeddings-capable model entry will be configured in AgentTools.
 
 ChatAI uses standard ProcessWire configuration and installation mechanisms.  
 If your environment is incompatible, you will be notified during installation.
@@ -48,11 +48,14 @@ If installation fails, no partial configuration should remain.
 
 After installation, review the ChatAI admin screens and complete the following minimum steps:
 
-- Confirm the API provider and credentials are configured.
+- Configure at least one chat-capable model entry in AgentTools.
+- Configure a separate embeddings-capable model entry in AgentTools.
+- In **Modules > ChatAI**, select the AgentTools chat model and the AgentTools embedding model.
+- In **Modules > ChatAI**, review the module permissions and frontend asset/file paths.
+- In **Setup > ChatAI**, review the Prompt, Dictionary, and Personalise tabs, then save the configuration.
 - Review default limits and safeguards.
-- Decide whether ChatAI should be enabled site-wide or restricted.
 
-At this stage, ChatAI can operate with default behaviour.
+ChatAI requires an embeddings-capable model for content indexing and contextual answers.
 
 ---
 
@@ -62,7 +65,7 @@ A successful installation can be confirmed by:
 
 - ChatAI appearing in the ProcessWire admin menu.
 - No errors reported during module install.
-- Admin screens loading without warnings.
+- Admin screens loading without blocking errors.
 - Test requests returning responses when ChatAI is enabled.
 
 If ChatAI is enabled but not visible on the frontend, this is expected until frontend integration is configured.

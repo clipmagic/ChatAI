@@ -1,6 +1,6 @@
 ## 6. ChatAI Behaviour Configuration
 
-*(ProcessChatAI – Setup / Settings → ChatAI)*
+*(ProcessChatAI – Setup > ChatAI)*
 
 This section describes how ChatAI behaviour is configured through the ProcessChatAI interface.
 
@@ -139,6 +139,7 @@ When enabled:
 This is useful when:
 
 - indexing or extraction logic has changed,
+- the selected embedding model has changed,
 - rendering behaviour was adjusted,
 - or a clean rebuild is required.
 
@@ -213,14 +214,6 @@ When enabled:
 - no vectors are deleted.
 
 Always use Dry Run first.
-
----
-
-##### Maximum Pages
-
-Limits how many matching pages are processed in a single run.
-
-This helps prevent long-running operations on large result sets.
 
 ---
 ##### Run Bulk Removal
@@ -373,7 +366,7 @@ Changes made here directly affect how questions are answered.
 This setting controls whether ChatAI automatically assembles the prompt used for each request.
 
 - When enabled, ChatAI builds the prompt dynamically using the configured fields on this tab.
-- When disabled, prompt construction is handled manually.
+- When disabled, ChatAI uses the manually maintained custom prompt instead of assembling one from the configured fields on this tab.
 
 Auto-generation is recommended in most cases, as it ensures consistent structure and incorporates updates to related settings automatically.
 
@@ -389,7 +382,7 @@ This section controls whether blacklist filtering is applied at the prompt stage
 
 When enabled, user input is checked against the configured blacklist terms before any request is processed.
 
-Messages containing blacklisted terms are blocked locally and are **not sent to the OpenAI API**.
+Messages containing blacklisted terms are blocked locally and are **not sent to the selected model API**.
 
 Blacklist terms themselves are defined below and are fully site-controlled.
 
@@ -401,7 +394,7 @@ Defines the list of terms that trigger a blacklist strike when detected in user 
 
 - Terms are matched before external requests are made.
 - Each match contributes to the blacklist strike count defined in the module configuration.
-- This list is independent of any filtering performed by OpenAI.
+- This list is independent of any filtering performed by the selected LLM provider.
 
 Terms can be added or removed as needed and may be language-specific where multi-language support is enabled.
 
@@ -447,7 +440,7 @@ This approach helps to:
 - control costs,
 - and keep responses focused on your site’s content.
 
-The index is built and maintained by the ChatAI indexer, which processes eligible pages based on the template rules defined below and the content rendered by `chatai-rag.php`.
+The index is built and maintained by the ChatAI indexer, which processes eligible pages based on the template rules defined below and the content rendered by the configured `chatai-rag.php` view.
 
 ---
 
@@ -532,7 +525,7 @@ Helps ChatAI distinguish between meaningful phrases and background noise.
 
 #### Current Page Reference
 
-llows ChatAI to treat the current page context as a relevance signal.
+Allows ChatAI to treat the current page context as a relevance signal.
 
 Useful for queries such as:
 
@@ -650,7 +643,7 @@ Defines phrases that indicate continuation, such as requests for more detail or 
 
 Defines the response used when follow-up intent is detected.
 
-This typically prompts the user to clarify or expand on the previous topic.
+This reply is used when ChatAI thinks the user is continuing the **previous thread** but needs more clarification or detail.
 
 ---
 
@@ -678,7 +671,7 @@ This section defines how ChatAI responds when insufficient context is available.
 
 Defines the response shown when the user’s input is too vague to match meaningful content or intent.
 
-This response should gently prompt the user to provide more information.
+This response should gently prompt the user to provide more information or better keywords for search.
 
 ---
 
@@ -690,6 +683,18 @@ They influence:
 - how input is classified,
 - which response path is chosen,
 - and whether content lookup is attempted.
+
+Each field or field group has a distinct influence:
+
+- **Current Page Reference** adds page-context hints for vague or contextual questions.
+- **Custom Terms** strengthen site-specific phrases that should count more heavily in relevance matching.
+- **Hard Stop Noise Words** remove words that should not influence interpretation at all.
+- **Soft Stop Noise Words** reduce the influence of common but not very meaningful words.
+- **Smalltalk triggers and reply** handle casual conversation that is not really a content query.
+- **Action triggers and reply** handle requests that imply doing or changing something rather than finding information.
+- **Follow-up triggers and reply** handle messages that appear to continue the current thread but need clarification.
+- **Question triggers** help identify direct information-seeking queries.
+- **Ambiguous or no-context reply** handles messages that still do not provide enough signal for meaningful lookup.
 
 They do not:
 - generate answers,
