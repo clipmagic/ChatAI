@@ -358,14 +358,33 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     }
 
     /**
+     * Resolve the configured RAG view path for install/runtime fallback usage.
+     *
+     * @return string
+     */
+    protected function configuredRagViewPath(): string
+    {
+        $config = $this->wire('config');
+        $moduleConfig = (array) $this->wire('modules')->getConfig(self::modName);
+        $ragView = trim((string) ($moduleConfig['rag_view'] ?? ''));
+        if($ragView === '') {
+            $ragView = '/site/modules/ChatAI/classes/RAG/chatai-rag.php';
+        }
+        $root = rtrim((string) $config->paths->root, '/');
+        if($root !== '' && $root[0] !== '/') {
+            $root = '/' . $root;
+        }
+        $fullPath = $root . '/' . ltrim($ragView, '/');
+        return realpath($fullPath) ?: $fullPath;
+    }
+
+    /**
      * @return string
      * @throws WireException
      */
     public function renderWidget(): string
     {
-        $config = wire("config");
-        $path = $config->paths->root . ltrim($this->widget, "/");
-        return $this->promptService()->getWidget($path);
+        return $this->promptService()->getWidget((string) $this->widget);
     }
 
     /**
@@ -1844,7 +1863,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
      * @throws WireException
      * @throws WirePermissionException
      */
-    private static function _createTemplate()
+    private function _createTemplate()
     {
         $templates = wire("templates");
         $files = wire("files");
@@ -1905,14 +1924,6 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $apiPage->save();
         }
 
-        if (!$files->exists($config->paths->templates . "chatai-rag.php")) {
-            $copyFrom =
-                $modules->siteModulesPath .
-                self::modName .
-                "/classes/RAG/chatai-rag.php";
-            $copyTo = $config->paths->templates . "chatai-rag.php";
-            $files->copy($copyFrom, $copyTo);
-        }
     }
 
     /**
@@ -1923,7 +1934,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     public function ___install(): void
     {
         self::_createDBTables();
-        self::_createTemplate();
+        $this->_createTemplate();
 
         $permissions = $this->wire()->permissions;
         if (!$permissions->get("chatai")) {
