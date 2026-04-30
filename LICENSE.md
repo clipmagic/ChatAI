@@ -1,6 +1,6 @@
 MIT License
 
-Copyright (c) [YEAR] [Your Name / Business Name]
+Copyright (c) 2026 Clip Magic
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
