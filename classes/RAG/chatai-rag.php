@@ -2,7 +2,7 @@
 /**
  * View used ONLY for RAG indexing.
  *
- * Save as: /site/templates/chatai-rag.php
+ * Default site path: /site/modules/ChatAI/classes/RAG/chatai-rag.php
  * Rendered by RAG.php
  * Output whatever content you want the model to see – keep it text‑first.
  */
@@ -11,7 +11,7 @@
 // Optional: simple helper to print a block safely
 $printBlock = function($html) {
     if(!is_string($html) || $html === '') return;
-    echo "</div><div>" . $html . "</div>\n"; // RAG.php will convert markup → plain text
+    echo "<div>" . $html . "</div>\n"; // RAG.php will convert markup → plain text
 };
 
 // 1) Prioritise key headline fields if present
@@ -41,7 +41,7 @@ foreach($skipByTemplate[$page->template->name] ?? [] as $fieldName) {
 }
 
 Use this when the same field is safe on one template but should not be indexed on
-another. Site-specific curation belongs here in /site/templates/chatai-rag.php.
+another. Site-specific curation belongs in the configured RAG view file.
 */
 
 // Collect fields in template order, keeping title/headline first
