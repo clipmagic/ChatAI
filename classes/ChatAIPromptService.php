@@ -7,6 +7,23 @@ class ChatAIPromptService extends Wire {
     protected $promptMemo = null;
 
     /**
+     * Convert a site-relative configured path like /site/... into an absolute filesystem path.
+     *
+     * @param string $path
+     * @return string
+     */
+    protected function absoluteConfiguredPath(string $path): string
+    {
+        $config = $this->wire('config');
+        $root = rtrim((string) $config->paths->root, '/');
+        if($root !== '' && $root[0] !== '/') {
+            $root = '/' . $root;
+        }
+        $fullPath = $root . '/' . ltrim($path, '/');
+        return realpath($fullPath) ?: $fullPath;
+    }
+
+    /**
      * @param bool $force
      * @return array
      * @throws WireException
@@ -286,6 +303,7 @@ class ChatAIPromptService extends Wire {
         $wire = $this->wire();
         $files = $wire->files;
         $user = $wire->user;
+        $config = $wire->config;
 
         $ln = '';
         if ($wire->languages) {
@@ -293,7 +311,7 @@ class ChatAIPromptService extends Wire {
             $ln = (int) $user->language->id;
         }
 
-        return (string) $files->render($path, [
+        $vars = [
             'ln' => $ln, // '' on non-ML sites, int on ML sites
             'intro' => $this->getIntro(),
             'placeholder' => $this->getPlaceholder(),
@@ -302,7 +320,15 @@ class ChatAIPromptService extends Wire {
             'thinking_text' => $this->getThinkingText(),
             'disclaimer_text' => $this->getDisclaimerText(),
             'footer_text' => $this->getFooterText(),
-        ]);
+        ];
+
+        $resolvedPath = $this->absoluteConfiguredPath($path);
+        $templatesPath = rtrim($config->paths->templates, '/') . '/';
+        if(str_starts_with($resolvedPath, $templatesPath)) {
+            return (string) $files->render($resolvedPath, $vars);
+        }
+
+        return (string) $files->render($resolvedPath, $vars, ['allowedPaths' => [dirname($resolvedPath) . '/']]);
     }
 
 
