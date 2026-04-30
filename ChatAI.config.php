@@ -175,76 +175,15 @@ $config = [
                 "value" => "/site/modules/ChatAI/chatai.js",
                 "stripTags" => true,
             ],
+            [
+                "name" => "rag_view",
+                "type" => "text",
+                "label" => __("Path to indexing view file"),
+                "notes" => "Default is /site/modules/ChatAI/classes/RAG/chatai-rag.php",
+                "value" => "/site/modules/ChatAI/classes/RAG/chatai-rag.php",
+                "stripTags" => true,
+            ],
         ],
     ],
 
-    [
-        "name" => "chatai_debug",
-        "type" => "fieldset",
-        "label" => __("Debug helpers"),
-        "collapsed" => 1,
-        "description" => __(
-            "Development-only tools for testing edge cases. These settings should remain OFF in production.",
-        ),
-        "children" => [
-            [
-                "name" => "debug_enabled",
-                "type" => "checkbox",
-                "label" => __("Enable debug helpers"),
-                "value" => 0,
-            ],
-            [
-                "name" => "debug_force_cutoff",
-                "type" => "checkbox",
-                "label" => __("Force cutoff response"),
-                "notes" => __(
-                    "Truncates the assistant response server-side, sanitises to plain text, and sets cutoff=true.",
-                ),
-                "showIf" => "debug_enabled=1",
-                "value" => 0,
-            ],
-            [
-                "name" => "debug_cutoff_mode",
-                "type" => "select",
-                "label" => __("Cutoff mode"),
-                "options" => [
-                    "chars" => __("Characters"),
-                    "words" => __("Words"),
-                    "awkward" => __("Awkward boundary (stress test)"),
-                ],
-                "columnWidth" => 33,
-                "showIf" => "debug_enabled=1, debug_force_cutoff=1",
-                "value" => "chars",
-            ],
-            [
-                "name" => "debug_cutoff_value",
-                "type" => "integer",
-                "label" => __("Cutoff value"),
-                "notes" => __(
-                    "For Characters: number of chars. For Words: number of words. For Awkward: base char count before stress text is appended.",
-                ),
-                "columnWidth" => 33,
-                "showIf" => "debug_enabled=1, debug_force_cutoff=1",
-                "value" => 200,
-            ],
-            [
-                "name" => "debug_latency_ms",
-                "type" => "select",
-                "label" => __("Artificial delay"),
-                "notes" => __(
-                    "Adds a server-side delay (superuser only) to test busy guards and UX states.",
-                ),
-                "options" => [
-                    "0" => __("None"),
-                    "250" => __("250 ms"),
-                    "1000" => __("1 s"),
-                    "3000" => __("3 s"),
-                    "8000" => __("8 s"),
-                ],
-                "columnWidth" => 33,
-                "showIf" => "debug_enabled=1",
-                "value" => "0",
-            ],
-        ],
-    ],
 ];
