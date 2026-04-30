@@ -3,14 +3,14 @@
  * RAG – ProcessWire-centric, render-first version
  *
  * What this version does:
- * - Treats the page as the source of truth. We render a dedicated view (e.g. /site/templates/chatai-rag.php)
- *   using $files->render('chatai-rag.php', ['page' => $page]) to get clean, chrome-free HTML.
+ * - Treats the page as the source of truth. We render a dedicated RAG view (default /site/templates/chatai-rag.php)
+ *   to get clean, chrome-free HTML for indexing.
  * - Convert that HTML to plain text (preserving bullets/numbered lists) with WireTextTools->markupToText.
  * - Chunk the text, embed each chunk, and store rows in chatai_vec_chunks.
  * - Retrieval: FULLTEXT prefilter by lang_id, cosine re-rank on embeddings.
  *
  * What it does NOT do:
- * - No field-slot config, no skip-lists. The chatai-rag.php view defines what content is in scope.
+ * - No field-slot config, no skip-lists. The configured chatai-rag.php view defines what content is in scope.
  * - No ingestion queue. Keep it simple. Call collectPageText($page, $cfg) when you need to (e.g. on save).
  *
  * Assumptions:
