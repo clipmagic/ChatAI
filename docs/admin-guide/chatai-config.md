@@ -12,7 +12,7 @@ They are typically configured once and changed infrequently.
 
 #### AgentTools Model
 
-ChatAI no longer manages chat-model API keys directly.
+ChatAI does not manage chat-model API keys directly.
 
 - Chat models are configured in AgentTools.
 - ChatAI stores the selected AgentTools model and uses it for model-backed replies.
@@ -101,7 +101,7 @@ Once the limit is reached, ChatAI will stop accepting new questions for that con
 
 This section controls how ChatAI responds when prohibited terms are detected in user input.
 
-Blacklist and blocking settings apply site-wide and are enforced **before** a request is sent to the configured model API.
+Blacklist and blocking settings apply site-wide. If a blacklisted term is detected in the user input, the user is warned, the request is rejected, and nothing is sent to the configured model API.
 
 They are designed to provide a simple, predictable safeguard against misuse.
 
