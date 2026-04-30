@@ -12,7 +12,7 @@ Different approaches are appropriate in different contexts.
 
 Most website chatbots fall into one of two categories:
 
-1. **Site-integrated chatbots**, where chatbot behaviour is controlled by the website itself.
+1. **Site-integrated chatbots**, where chatbot behaviour is governed by the website itself.
 2. **SaaS-hosted chatbots**, where behaviour is largely managed by an external service.
 
 ChatAI is a site-integrated chatbot, written as a ProcessWire module for use on ProcessWire websites.
@@ -23,7 +23,7 @@ Importantly, this means the site does not expose live pages or uncontrolled site
 
 This differs from approaches where a ProcessWire module primarily acts as a connector or wrapper around a third-party, subscription-based chatbot service. In those models, behaviour and content handling are managed externally, and the service may read or process live web pages more broadly.
 
-While automated page ingestion can be convenient, it may also introduce unwanted content, layout noise, or increased susceptibility to prompt manipulation if not carefully constrained. ChatAI’s design favours explicit content selection and application-level control over automated discovery.
+While automated page ingestion can be convenient, it may also introduce unwanted content, layout noise, or increased susceptibility to prompt manipulation if not carefully constrained. ChatAI’s design favours explicit content selection and application-level decision-making over automated discovery.
 
 ---
 
@@ -45,7 +45,7 @@ The AI model is used as a text-generation tool, not as the controlling system.
 
 Site-integrated chatbots typically offer:
 
-- fine-grained control over prompts and behaviour,
+- fine-grained ownership of prompts and behaviour,
 - access-aware use of site content,
 - predictable cost and usage limits,
 - deep integration with site logic and structure,
@@ -63,7 +63,7 @@ A site-integrated chatbot is often a good fit when:
 - access control matters,
 - behaviour must be audited or constrained,
 - the site will evolve over time,
-- or developers need greater control over behaviour customisation.
+- or developers need greater scope for behaviour customisation.
 
 ---
 
@@ -102,15 +102,15 @@ A SaaS chatbot is often a good fit when:
 - time-to-launch is critical,
 - the site is marketing-focused,
 - deep integration is not required,
-- or the team prefers not to manage infrastructure.
+- or the team prefers a vendor-managed chatbot setup.
 
 ---
 
 ## Key Differences That Matter
 
-### Control vs Convenience
+### Site Ownership vs Convenience
 
-- **ChatAI** prioritises control and transparency.
+- **ChatAI** prioritises site ownership and transparency.
 - **SaaS chatbots** prioritise ease of use and speed.
 
 ---
@@ -147,7 +147,7 @@ This affects predictability and auditability.
 
 ### Cost and Scaling
 
-- ChatAI allows direct control over usage and limits.
+- ChatAI allows direct oversight of usage and limits.
 - SaaS pricing often bundles usage, features, and support.
 
 Neither approach is inherently cheaper. The cost profile is different.
@@ -173,28 +173,23 @@ Both philosophies are valid, depending on goals and constraints.
 
 A useful question is not *“Which chatbot is better?”* but:
 
-> *How much control do we need, and how much complexity are we willing to manage?*
+> *How much responsibility for behaviour and content handling are we willing to hand to a third-party service?*
 
-For some sites, a SaaS chatbot is the right answer.  
-For others, a site-integrated approach like ChatAI provides necessary control and flexibility.
+For some sites, a SaaS chatbot is the right answer.
+
+For others, a site-integrated approach like ChatAI provides the needed ownership and flexibility.
 
 ---
 
 ## Summary
 
-ChatAI differs from many website chatbots not because it uses a different AI model, but because it places responsibility and control inside the site itself.
+ChatAI differs from many website chatbots not because it uses a different AI model, but because it places responsibility and decision-making inside the site itself.
 
-This design offers flexibility and transparency at the cost of greater involvement.
-
-Understanding these trade-offs helps ensure the chatbot approach matches the needs of the site and its users.
+Understanding these differences helps ensure the chatbot approach matches the needs of the site and its users.
 
 ---
 
 ## Further Information
 
-<!--
-DOCS TODO:
-- Link to “The Anatomy of a Website Chatbot”
-- Link to “Prompt Injection and Site Security”
-- Optional external references on site-integrated vs SaaS architectures
--->
+- [The Anatomy of a Website Chatbot](anatomy-of-a-website-chatbot.md)
+- [Prompt Injection and Site Security](prompt-injection-and-site-security.md)

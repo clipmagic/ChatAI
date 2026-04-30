@@ -2,25 +2,25 @@
 
 This guide explains how a website chatbot works at a conceptual level.
 
-It is intended for readers who are not deeply technical but want a clear mental model of the moving parts involved and why design choices matter.
+It is intended for readers who are not deeply technical and want a clear mental model of the moving parts involved and why design choices matter.
 
 ---
 
 ## Purpose of This Guide
 
-This guide describes the anatomy of a **site-integrated (“local”) website chatbot**.
+This guide describes the anatomy of a **site-integrated website chatbot**.
 
 In this model:
 - chatbot logic runs as part of the website application,
-- the site controls prompts, content, limits, and behaviour,
+- the site defines prompts, content, limits, and behaviour,
 - and an external AI model is used as a text-generation tool.
 
 This guide does **not** cover:
 - SaaS-hosted chatbot platforms,
 - third-party widgets with opaque behaviour,
-- or fully managed chatbot services where site owners have limited control.
+- or fully managed chatbot services where site owners have limited visibility or influence.
 
-Those approaches are valid in many situations, but they follow a different architecture and set of trade-offs.
+Those approaches are valid in many situations, and they follow a different architecture and operating model.
 
 ---
 
@@ -35,13 +35,13 @@ It is a workflow made up of several distinct parts working together:
 3. An AI model generates a response.
 4. The website decides what to show back to the visitor.
 
-Understanding which part is responsible for what is key to understanding safety, reliability, and control.
+Understanding which part is responsible for what is key to understanding safety, reliability, and governance.
 
 ---
 
 ## The User
 
-### What It Is
+### What It Is and Does
 
 The user is the person interacting with the chatbot through the website.
 
@@ -51,10 +51,6 @@ They may be:
 - curious,
 - confused,
 - or deliberately probing the system.
-
----
-
-### What It Does
 
 The user provides text input in the form of questions, instructions, or statements.
 
@@ -82,15 +78,11 @@ A chatbot should never assume:
 
 ## The Website (Application Layer)
 
-### What It Is
+### What It Is and Does
 
-The website application is the code and configuration that you control.
+The website application is the code and configuration that you manage.
 
 It sits between the user and the AI model.
-
----
-
-### What It Does
 
 The website is responsible for:
 
@@ -112,16 +104,15 @@ The AI model does not act independently.
 
 ### Why That Matters
 
-Security, cost control, access rules, and predictability all live here.
+Security, cost management, access rules, and predictability all live here.
 
-The website is the authority.  
-The AI model is a tool.
+The website remains responsible for what information is provided to the model and what response is returned to the user.
 
 ---
 
 ## The AI Model (Large Language Model)
 
-### What It Is
+### What It Is and Does
 
 A Large Language Model (LLM) is a **text-generation system** trained to read and produce written language.
 
@@ -129,11 +120,9 @@ This guide focuses specifically on **text-based models**.
 
 It does not cover image, audio, video, or multimodal AI systems.
 
----
+Throughout this documentation, the term model refers to a Large Language Model (LLM), a text-generation system trained to read and produce written language.
 
-### What It Does
-
-A model (short for Large Language Model, or LLM) is a text-generation system trained to read and produce written language. Throughout this documentation, the term model is used to refer to this text-generation system.
+A model:
 - generates text based on patterns,
 - predicts likely next words,
 - and responds only to the input it is given.
@@ -166,15 +155,11 @@ All constraints must be applied by the website.
 
 ## Instructions and Prompts
 
-### What They Are
+### What They Are and Do
 
 Instructions (often called prompts) are structured text sent to the AI model.
 
 They are not user-visible content.
-
----
-
-### What They Do
 
 Instructions define:
 - the role of the assistant,
@@ -194,7 +179,7 @@ They shape how the model responds.
 
 ### Why That Matters
 
-If instructions are poorly controlled, user input may attempt to override them.
+If instructions are poorly defined or weakly separated, user input may attempt to override them.
 
 This is where prompt injection attempts occur.
 
@@ -202,18 +187,14 @@ This is where prompt injection attempts occur.
 
 ## Site Content and Context
 
-### What It Is
+### What It Is and Does
 
 Site content includes:
 - pages,
 - text,
 - and structured information from the website.
 
----
-
-### What It Does
-
-Site content helps ground answers in real information rather than generic responses.
+It helps ground answers in real information rather than generic responses.
 
 ---
 
@@ -279,11 +260,11 @@ Clear separation of responsibilities:
 ChatAI follows this site-integrated approach.
 
 It:
-- keeps control in the website,
+- keeps decision-making in the website,
 - treats the model as a text generator,
 - and provides configuration and safeguards at the application level.
 
-Detailed configuration is covered in the Admin Guide.
+Detailed configuration is covered in the [Admin Guide](../admin-guide/admin-configuration.md).
 
 ---
 
@@ -301,29 +282,10 @@ It is a system made up of:
 Understanding this anatomy helps site owners make safer, more predictable choices when adding AI features to their sites.
 
 ---
-## Glossary of Commonly Used Terms
-
-This glossary provides brief explanations of terms you may encounter when reading about website chatbots and AI systems.
-
-These are simplified descriptions intended for orientation, not formal definitions.
-
-| Term | Stands For | Meaning |
-|-----|------------|---------|
-| AI | Artificial Intelligence | A broad term for computer systems designed to perform tasks that normally require human intelligence, such as language processing. |
-| Model | — | A text-generation system trained to produce written language based on patterns in data. |
-| LLM | Large Language Model | A type of model designed specifically to work with written language. Often shortened to “model” in this documentation. |
-| Prompt | — | Instructions and input text sent to the model to guide how it generates a response. |
-| RAG | Retrieval-Augmented Generation | A technique where selected site content is provided to the model to help ground responses in real information. |
-| Prompt Injection | — | An attempt to manipulate a chatbot by crafting input that interferes with its intended instructions or constraints. |
-
----
 ## Further Information
 
-<!--
-DOCS TODO:
-- Link to “Prompt Injection and Site Security” guide
-- Link to “The Anatomy of a Website Chatbot”
-- Add references to authoritative external resources (OWASP, OpenAI, IBM Technology)
-- Review links for longevity and vendor neutrality
--->
 These resources are optional and intended for readers who want a deeper understanding beyond this introductory guide.
+
+- [Glossary](../glossary.md)
+- [How ChatAI Differs from Other Website Chatbots](how-chatai-differs-from-other-website-chatbots.md)
+- [Prompt Injection and Site Security](prompt-injection-and-site-security.md)

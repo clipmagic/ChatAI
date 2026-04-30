@@ -56,7 +56,7 @@ Industry guidance increasingly emphasises that AI models should be treated as to
 
 ## What Prompt Injection Can and Cannot Do
 
-Prompt injection is primarily a **control and disclosure risk**.
+Prompt injection is primarily an **instruction-following and disclosure risk**.
 
 It can sometimes influence:
 - what the assistant says,
@@ -68,7 +68,9 @@ Prompt injection cannot:
 - read content your application does not supply to the model,
 - access databases, files, or services unless your code exposes them.
 
-In practice, the greatest risk is not that the model is “hacked”, but that the application unintentionally supplies information or capabilities that should not be exposed.
+In practice, the greater risk is that the application unintentionally supplies information or capabilities that should not be exposed.
+
+The main failure is usually at the application boundary, not in the sense of the model being “hacked”.
 
 ---
 
@@ -195,7 +197,7 @@ Those topics are important and site-specific, and should be addressed as part of
 
 Prompt injection is a real consideration for any public-facing chatbot.
 
-The most effective mitigations are not clever prompts. They are clear access rules, careful control of what is sent to the model, and predictable safeguards in application logic.
+The most effective mitigations are not clever prompts. They are clear access rules, careful selection of what is sent to the model, and predictable safeguards in application logic.
 
 ChatAI is built with this mindset and provides configuration and hooks to support it.
 
@@ -223,16 +225,25 @@ The following resources provide additional context and background.
 
 ---
 
-### OpenAI
+### Provider Documentation
 
-- **Safety and Misuse Prevention**  
+- **OpenAI: Safety and Misuse Prevention**  
   https://platform.openai.com/docs/guides/safety
 
-- **Prompt Engineering Best Practices**  
+- **OpenAI: Prompt Engineering Best Practices**  
   https://platform.openai.com/docs/guides/prompt-engineering
 
-- **Abuse Prevention and Rate Limiting**  
+- **OpenAI: Abuse Prevention and Rate Limiting**  
   https://platform.openai.com/docs/guides/abuse
+
+- **Anthropic: Mitigate Jailbreaks and Prompt Injections**  
+  https://docs.anthropic.com/en/docs/test-and-evaluate/strengthen-guardrails/mitigate-jailbreaks
+
+- **Anthropic: Prompt Engineering Overview**  
+  https://docs.anthropic.com/en/docs/prompt-engineering
+
+- **Anthropic: Rate Limits**  
+  https://docs.anthropic.com/en/api/rate-limits
 
 ---
 

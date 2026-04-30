@@ -1,5 +1,4 @@
-### Developer documentation
-## ChatAI
+# ChatAI
 
 ChatAI is a ProcessWire chatbot module. It keeps chatbot behaviour inside the site:
 
@@ -12,7 +11,7 @@ ChatAI is a ProcessWire chatbot module. It keeps chatbot behaviour inside the si
 
 Chat generation uses models configured in AgentTools. Configure provider credentials, endpoints, and model choices in AgentTools, then select the AgentTools model in ChatAI module settings.
 
-### Requirements
+## Requirements
 
 - ProcessWire 3.0.201 or newer
 - PHP 8.0 or newer
@@ -20,61 +19,36 @@ Chat generation uses models configured in AgentTools. Configure provider credent
 - TextformatterEntities
 - TextformatterNewlineBR
 
-### Model Configuration
+## Documentation
 
-ChatAI uses AgentTools as the model registry for chat responses. AgentTools owns API keys and provider endpoints. ChatAI stores only the selected AgentTools model id and generation controls such as max tokens, timeout, verbosity, and reasoning effort.
+Start with the documentation index:
 
-The current RAG embedding layer now has first-pass configuration for embedding model, endpoint, and API key, with defaults matching the existing OpenAI setup. The built-in implementation still expects an OpenAI-compatible embedding response shape, and advanced/custom embedding integrations are site-specific. Changing embedding settings requires a full vector reindex.
+- [Documentation Home](docs/README.md)
 
-## Accessibility & Call-to-Action (CTA) Guidelines
+### Admin Guides
 
-### Why
-ProcessChatAI often drives bookings and enquiries. It should stay accessible (WCAG 2.2 AA) while offering frictionless next steps.
+- [Introduction](docs/admin-guide/introduction.md)
+- [Installation](docs/admin-guide/installation.md)
+- [Admin Configuration](docs/admin-guide/admin-configuration.md)
+- [ChatAI Config](docs/admin-guide/chatai-config.md)
+- [ProcessChatAI Config](docs/admin-guide/processchatai-config.md)
+- [Frontend Integration](docs/admin-guide/frontend-integration.md)
+- [Content and RAG Management](docs/admin-guide/content-and-rag-management.md)
+- [ChatAI Multilanguage Support](docs/admin-guide/chatai-multilanguage-support.md)
+- [Developer Extension Points](docs/admin-guide/developer-extension-points.md)
+- [How ChatAI Works](docs/admin-guide/how-chatai-works.md)
 
-### Accessibility checklist
-- Keyboard: all controls operable; visible focus; logical tab order.
-- Screen readers: chat log is `aria-live="polite"`; messages labelled (“Assistant says…”, “You said…”); input has a `<label>`; send button has an accessible name.
-- Errors: announced to screen readers and shown inline in plain language.
-- Contrast & motion: meet WCAG ratios; honour `prefers-reduced-motion`.
-- Responsive: reflow to 320px without horizontal scroll; touch targets ≈24px min.
-- Timing: warn before any session or booking timeout; allow extend.
-- Links: descriptive text (“Book an appointment online”), not “click here”. If opening a new tab, say so in the label.
+### Guides
 
-### CTA policy
-Avoid appending “Book now” to every reply. Use contextual CTAs instead:
-- Show after value is delivered or when user intent is clear (availability, pricing, location).
-- Frequency cap: once per conversation (or once every N turns).
-- Page-aware: suppress inside booking flows and on error messages.
-- Language-aware: render in the user’s language.
-- Use accessible wording and indicate new tabs in the label.
+- [The Anatomy of a Website Chatbot](docs/guides/anatomy-of-a-website-chatbot.md)
+- [How ChatAI Differs from Other Website Chatbots](docs/guides/how-chatai-differs-from-other-website-chatbots.md)
+- [Prompt Injection and Site Security](docs/guides/prompt-injection-and-site-security.md)
+- [Understanding Tokens and Costs](docs/guides/understanding-tokens-and-costs.md)
 
-### Hooks (no core changes required)
-Sites can customise behaviour via hookable methods:
+### Glossary
 
-- `beforeSend(array $request): array`  
-  Mutate the outbound API request (headers, system prompts, tenant tags).
-- `afterSend(array $rawResponse): array`  
-  Inspect/mutate the vendor response before normalisation.
-- `composeCTA(array $ctx): ?string`  
-  Return an HTML fragment for a CTA, or `null`.
-- `afterResponse(array $payload): array`  
-  Last-mile tweaks before the JSON leaves the server.
+- [ChatAI Glossary](docs/glossary.md)
 
-Example (in `/site/ready.php`):
-
-```php
-$wire->addHookAfter('ProcessChatAI::composeCTA', function(HookEvent $e) {
-    $ctx = $e->arguments(0);
-    $session = wire('session');
-    if($session->get('ctaShown')) return;
-    if(!empty($ctx['isBookingPage'])) return;
-
-    $label = ($ctx['lang_id'] === 2) ? 'Reservar turno en línea' : 'Book an appointment online';
-    $session->set('ctaShown', true);
-    $e->return = "<p><a href='/book' target='_blank' rel='noopener'>${label} (opens in a new tab)</a></p>";
-} 
-```
----
 ## License
 
 This module is released under the MIT License.
