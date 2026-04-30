@@ -12,19 +12,56 @@ class ChatAIIndexer extends Wire
 {
     use HeadingsOnlyExtractor;
 
+    /**
+     * Resolve the configured RAG view path with safe fallbacks.
+     *
+     * @return array{path:string, allowedPaths:array<int, string>}
+     */
+    protected function resolveRagView(): array
+    {
+        $files = $this->wire('files');
+        $config = $this->wire('config');
+        $chatai = $this->wire('modules')->get('ChatAI');
+
+        $configured = trim((string) ($chatai->rag_view ?? ''));
+        if($configured === '') {
+            $configured = '/site/modules/ChatAI/classes/RAG/chatai-rag.php';
+        }
+
+        $root = rtrim((string) $config->paths->root, '/');
+        if($root !== '' && $root[0] !== '/') {
+            $root = '/' . $root;
+        }
+        $candidatePath = $root . '/' . ltrim($configured, '/');
+        $candidate = realpath($candidatePath) ?: $candidatePath;
+        if($files->exists($candidate)) {
+            return [
+                'path' => $candidate,
+                'allowedPaths' => [dirname($candidate) . '/'],
+            ];
+        }
+
+        $defaultTemplate = $config->paths->templates . 'chatai-rag.php';
+        if($files->exists($defaultTemplate)) {
+            return [
+                'path' => $defaultTemplate,
+                'allowedPaths' => [$config->paths->templates],
+            ];
+        }
+
+        $moduleViewDir = $config->paths('ChatAI') . 'classes/RAG/';
+        return [
+            'path' => $moduleViewDir . 'chatai-rag.php',
+            'allowedPaths' => [$moduleViewDir],
+        ];
+    }
+
     /** Build or rebuild a single page for one language */
     public function buildForPage(Page $page, int $langId): array
     {
         $files = $this->wire('files');
-        $config = $this->wire('config');
-
-        if($files->exists($config->paths->templates . 'chatai-rag.php')) {
-            $html = $files->render('chatai-rag.php', ['page' => $page]);
-        } else {
-            $ragViewPath = $config->paths('ChatAI') . 'classes/RAG/';
-            $view = $ragViewPath . 'chatai-rag.php';
-            $html = $files->render($view, ['page' => $page], ['allowedPaths', [$ragViewPath]]);
-        }
+        $ragView = $this->resolveRagView();
+        $html = $files->render($ragView['path'], ['page' => $page], ['allowedPaths', $ragView['allowedPaths']]);
 
         $tt = new WireTextTools();
         $text = $tt->markupToText($html);
@@ -83,4 +120,3 @@ class ChatAIIndexer extends Wire
         return $next;
     }
 }
-
