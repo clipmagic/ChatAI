@@ -1,4 +1,4 @@
-## Developer Extension Points
+## 10. Developer Extension Points and Hooks
 
 ChatAI is designed to be extended using standard ProcessWire hooks.
 

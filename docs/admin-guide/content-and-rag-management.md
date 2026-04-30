@@ -1,4 +1,4 @@
-## Content and RAG Management
+## 8. Content and RAG Management
 
 This guide explains how ChatAI selects, indexes, and manages site content for use in Retrieval-Augmented Generation (RAG), meaning it looks up relevant site content and uses those excerpts as context for an answer.
 

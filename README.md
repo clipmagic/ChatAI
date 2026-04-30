@@ -27,16 +27,16 @@ Start with the documentation index:
 
 ### Admin Guides
 
-- [Introduction](docs/admin-guide/introduction.md)
-- [Installation](docs/admin-guide/installation.md)
-- [Admin Configuration](docs/admin-guide/admin-configuration.md)
-- [ChatAI Config](docs/admin-guide/chatai-config.md)
-- [ProcessChatAI Config](docs/admin-guide/processchatai-config.md)
-- [Frontend Integration](docs/admin-guide/frontend-integration.md)
-- [Content and RAG Management](docs/admin-guide/content-and-rag-management.md)
-- [ChatAI Multilanguage Support](docs/admin-guide/chatai-multilanguage-support.md)
-- [Developer Extension Points](docs/admin-guide/developer-extension-points.md)
-- [How ChatAI Works](docs/admin-guide/how-chatai-works.md)
+- [1. Introduction](docs/admin-guide/introduction.md)
+- [2. How ChatAI Works (High-Level Overview)](docs/admin-guide/how-chatai-works.md)
+- [3. Installation](docs/admin-guide/installation.md)
+- [4. Admin Configuration Overview](docs/admin-guide/admin-configuration.md)
+- [5. ChatAI Module Configuration](docs/admin-guide/chatai-config.md)
+- [6. ChatAI Behaviour Configuration](docs/admin-guide/processchatai-config.md)
+- [7. Frontend Integration](docs/admin-guide/frontend-integration.md)
+- [8. Content and RAG Management](docs/admin-guide/content-and-rag-management.md)
+- [9. ChatAI Multilanguage Support](docs/admin-guide/chatai-multilanguage-support.md)
+- [10. Developer Extension Points and Hooks](docs/admin-guide/developer-extension-points.md)
 
 ### Guides
 

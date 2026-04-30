@@ -1,4 +1,4 @@
-# ChatAI Multilanguage Support
+## 9. ChatAI Multilanguage Support
 
 This guide explains how ChatAI behaves on multilingual ProcessWire sites and what administrators should be aware of when configuring ChatAI for multiple languages.
 
