@@ -15,9 +15,6 @@ class DictionaryTab
     public function build($form, $data): array
     {
         $m = \ProcessWire\wire('modules');
-        $user = \ProcessWire\wire('user');
-        $userLang = $user->language;
-
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
         $inputfields->attr('name', 'dictionary');

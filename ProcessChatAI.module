@@ -206,7 +206,7 @@ class ProcessChatAI extends Process
      * @throws WireException
      * @throws WirePermissionException
      */
-    protected function renderInsightsJson(): string
+    public function renderInsightsJson(): string
     {
         if (!$this->chatAI()->logger()) {
             return json_encode([

@@ -3,8 +3,6 @@
 namespace ChatAI\AdminTabs;
 
 use ProcessWire;
-use ProcessWire\Wire;
-use ProcessWire\Languages;
 
 class PersonaliseTab
 {
@@ -20,9 +18,6 @@ class PersonaliseTab
     {
 
         $m = \ProcessWire\wire('modules');
-        $user = \ProcessWire\wire('user');
-        $userLang = $user->language;
-
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
         $inputfields->attr('name', 'personalise');
@@ -176,4 +171,3 @@ class PersonaliseTab
         return $output;
     }
 }
-

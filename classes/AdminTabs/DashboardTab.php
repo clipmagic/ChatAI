@@ -2,7 +2,6 @@
 namespace ChatAI\AdminTabs;
 
 use ProcessWire;
-use ProcessWire\Wire;
 
 class DashboardTab
 {
@@ -16,8 +15,7 @@ class DashboardTab
      */
     public function build($form, $data): array {
 
-        $m         = \ProcessWire\wire('modules');
-        $languages = \ProcessWire\wire('languages');
+        $m = \ProcessWire\wire('modules');
 
         $inputfields = $m->get('InputfieldWrapper');
         $inputfields->addClass('WireTab');
