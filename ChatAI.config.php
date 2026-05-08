@@ -2,20 +2,51 @@
 
 require_once __DIR__ . "/classes/ChatAIModelClient.php";
 
-$configData = $this->getConfig("ChatAI");
+$configData = wire("modules")->getConfig("ChatAI");
 $modelClient = new ChatAIModelClient();
 $modelClient->setWire(wire());
 $modelList = $modelClient->modelOptions();
 $selectedModel = $modelClient->resolveModelId((string) ($configData["agenttools_model_id"] ?? ""));
-$selectedEmbeddingModel = $modelClient->resolveModelId((string) ($configData["agenttools_embedding_model_id"] ?? ""));
+$configuredEmbeddingModel = (string) ($configData["agenttools_embedding_model_id"] ?? "");
+$selectedEmbeddingModel = $configuredEmbeddingModel !== "" ? $modelClient->resolveModelId($configuredEmbeddingModel) : "";
 
 if (!$selectedModel || ($modelList && !isset($modelList[$selectedModel]))) {
     $selectedModel = (string) (array_key_first($modelList) ?? "");
 }
 
-if (!$selectedEmbeddingModel || ($modelList && !isset($modelList[$selectedEmbeddingModel]))) {
-    $selectedEmbeddingModel = (string) (array_key_first($modelList) ?? "");
+if ($configuredEmbeddingModel !== "" && (!$selectedEmbeddingModel || ($modelList && !isset($modelList[$selectedEmbeddingModel])))) {
+    $selectedEmbeddingModel = "";
 }
+
+$embeddingStatus = $modelClient->validateEmbeddingModel($selectedEmbeddingModel);
+$embeddingChildren = [];
+$embeddingModelOptions = $modelList
+    ? ["" => __("Select an embeddings model")] + $modelList
+    : ["" => __("No AgentTools models configured")];
+
+if (empty($embeddingStatus["ok"])) {
+    $embeddingChildren[] = [
+        "name" => "agenttools_embedding_warning",
+        "type" => "markup",
+        "label" => __("Embedding setup incomplete"),
+        "value" => "<p class='ui-state-error' style='padding: 0.75em; margin: 0 0 1em;'>" .
+            wire("sanitizer")->entities(implode(" ", $embeddingStatus["errors"] ?? [])) .
+            "</p>",
+        "columnWidth" => 100,
+    ];
+}
+
+$embeddingChildren[] = [
+    "name" => "agenttools_embedding_model_id",
+    "type" => "select",
+    "label" => __("Embedding model"),
+    "columnWidth" => 100,
+    "options" => $embeddingModelOptions,
+    "value" => $selectedEmbeddingModel,
+    "notes" => $modelList
+        ? __("Select an AgentTools entry for embeddings. This can be different from the chat model and should point to an embeddings-capable endpoint/model.")
+        : __("Configure at least one suitable model/API key in AgentTools first."),
+];
 
 $roles = wire("roles");
 $promptRoleOptions = [];
@@ -117,20 +148,8 @@ $config = [
         "type" => "fieldset",
         "label" => __("RAG Embeddings"),
         "description" => __("Embeddings use a separately selected AgentTools model entry. Configure a dedicated embeddings-capable entry in AgentTools if needed. Changing embedding settings requires a full reindex of vectors."),
-        "collapsed" => 5,
-        "children" => [
-            [
-                "name" => "agenttools_embedding_model_id",
-                "type" => "select",
-                "label" => __("Embedding model"),
-                "columnWidth" => 100,
-                "options" => $modelList ?: ["" => __("No AgentTools models configured")],
-                "value" => $selectedEmbeddingModel,
-                "notes" => $modelList
-                    ? __("Select an AgentTools entry for embeddings. This can be different from the chat model and should point to an embeddings-capable endpoint/model.")
-                    : __("Configure at least one suitable model/API key in AgentTools first."),
-            ],
-        ],
+        "collapsed" => empty($embeddingStatus["ok"]) ? 0 : 5,
+        "children" => $embeddingChildren,
     ],
     [
         "name" => "prompt_roles",

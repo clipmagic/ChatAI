@@ -259,7 +259,7 @@ class DashboardTab
         $form->add($inputfields);
 
         $output = [];
-        $key = $languages->_('Dashboard');
+        $key = $m->_('Dashboard');
         $value = $inputfields->render();
         $output[$key] = $value;
         $output['form'] = $form;

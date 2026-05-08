@@ -29,6 +29,8 @@ Disabling this option is recommended when performing bulk page updates or import
 
 #### Analytics and KPIs
 
+![Analytics and KPIs](../images/chatai-dashboard-metrics.png)
+
 Defines thresholds used to flag potential issues on the dashboard.
 
 These values do not affect chatbot behaviour directly. They are used only to highlight conditions that may require attention.
@@ -81,6 +83,8 @@ These views help identify unusual patterns or changes in behaviour.
 ---
 
 #### Insights
+
+![Insight summaries](../images/chatai-dashboard-insights.png)
 
 Highlights notable conditions based on current metrics and configured thresholds.
 

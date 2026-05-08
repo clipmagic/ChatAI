@@ -169,7 +169,7 @@ class DictionaryTab
         $f->attr('name+id', 'blocked_action_verbs');
         $f->label($m->_('Block triggers'));
         $f->notes("Comma separated.");
-        $value = $data['blocked_action_verbs'] ?? $m->_('switch, set, change, enable, disable, remember, forget, translate, summarize, rewrite, draft, compose, make, do, show, list, add,remove');
+        $value = $data['blocked_action_verbs'] ?? $m->_('switch,set,change,enable,disable,remember,forget,rewrite,draft,compose,make,do,add,remove');
         $f->val($value);
         $f->stripTags = true;
         $f->useLanguages = true;

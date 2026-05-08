@@ -776,10 +776,33 @@ class ProcessChatAI extends Process
             'current_id'        => 0,
         ];
 
+        if (!$dryRun) {
+            $embeddingStatus = $chatai->modelClient()->validateEmbeddingModel((string) ($chatai->agenttools_embedding_model_id ?? ''));
+            if (empty($embeddingStatus['ok'])) {
+                $message = implode(' ', $embeddingStatus['errors'] ?? []);
+                $summary['errors']++;
+                $summary['error'] = $message;
+                $summary['_warn'] = $message;
+
+                return $summary;
+            }
+        }
+
         foreach($pages->find($selector) as $page) {
-            $summary['current_id'] = (int) $page->id;
+            $pageId = (int) $page->id;
+            $summary['current_id'] = $pageId;
 
             try {
+                // Site templates/page classes rendered earlier in this long request may
+                // mutate referenced Page objects in memory. Re-fetch each page before
+                // indexing so bulk uses stored field values, like the save hook does.
+                $pages->uncache($pageId);
+                $page = $pages->get("id={$pageId}, include=all");
+                if(!$page->id) {
+                    $summary['last_id'] = $pageId;
+                    continue;
+                }
+
                 // Use the same definition of "indexable" as the hook / collectPageText.
                 $eligible = $rag->shouldIndexPage($page, $cfg);
 

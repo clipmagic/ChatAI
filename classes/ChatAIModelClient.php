@@ -136,6 +136,48 @@ class ChatAIModelClient extends Wire
     }
 
     /**
+     * @param string $id
+     * @return array{ok: bool, errors: array, entry: array|null}
+     * @throws WireException
+     */
+    public function validateEmbeddingModel(string $id): array
+    {
+        if (trim($id) === "") {
+            return [
+                "ok" => false,
+                "errors" => [$this->_("Select an AgentTools entry for embeddings.")],
+                "entry" => null,
+            ];
+        }
+
+        $entry = $this->modelEntry($id);
+        if (!$entry) {
+            return [
+                "ok" => false,
+                "errors" => [$this->_("Select an AgentTools entry for embeddings.")],
+                "entry" => null,
+            ];
+        }
+
+        $errors = [];
+        if (trim((string) ($entry["model"] ?? "")) === "") {
+            $errors[] = $this->_("The selected embeddings entry is missing a model.");
+        }
+        if (trim((string) ($entry["key"] ?? "")) === "") {
+            $errors[] = $this->_("The selected embeddings entry is missing an API key.");
+        }
+        if (trim((string) ($entry["endpoint"] ?? "")) === "") {
+            $errors[] = $this->_("The selected embeddings entry is missing an endpoint URL.");
+        }
+
+        return [
+            "ok" => !$errors,
+            "errors" => $errors,
+            "entry" => $entry,
+        ];
+    }
+
+    /**
      * @param array $messages
      * @param string $modelId
      * @param array $options

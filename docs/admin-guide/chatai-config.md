@@ -1,5 +1,7 @@
 ## 5. ChatAI Module Configuration 
 
+![ChatAI module config](../images/chatai-module-config.jpg)
+
 ### 5.1 Model Settings
 
 This section covers the settings used to connect ChatAI to the configured AgentTools model and control how requests and responses are handled at a technical level.
@@ -17,6 +19,8 @@ ChatAI does not manage chat-model API keys directly.
 - Chat models are configured in AgentTools.
 - ChatAI stores the selected AgentTools model and uses it for model-backed replies.
 - If the selected AgentTools model is removed or no longer available, ChatAI shows a warning and waits for the configuration to be re-saved.
+
+![Models and keys in AgentTools](../images/agenttools-chat-and-embed-sample-config.png)
 
 ---
 

@@ -18,15 +18,23 @@ $printBlock = function($html) {
 foreach (["title", "headline"] as $key) {
     if ($page->template->hasField($key)) {
         $val = $page->get($key);
-        if($val) $printBlock($page->render($key));
+        if($val) $printBlock((string) $val);
     }
 }
 
 // 2) Then render everything else in a generic way (skip admin/meta fields)
 $skip = [
     'name','sort','created','modified','status','id',
+    'delete','publish',
     // add any others you never want in RAG context
 ];
+
+$isSkippedField = function($name) use (&$skip) {
+    $name = (string) $name;
+    if (in_array($name, $skip, true)) return true;
+    if (preg_match('/^(loaded|publish|delete)_repeater\d+$/', $name)) return true;
+    return false;
+};
 
 /*
 Template-specific skip example:
@@ -52,33 +60,35 @@ $renderQueue = [];
 foreach ($page->fields as $field) {
     /** @var Field $field */
     $n = $field->name;
-    if (in_array($n, $skip, true)) continue;
+    if ($isSkippedField($n)) continue;
     if (in_array($n, ['title','headline'], true)) continue; // already rendered
     $renderQueue[] = $field;
 }
 
 // 3) Generic renderer that understands common complex fieldtypes
-$renderField = function(Page $p, Field $f) use ($printBlock) {
+$renderField = function(Page $p, Field $f) use (&$renderField, $printBlock, $isSkippedField) {
     $name = $f->name;
+    if ($isSkippedField($name)) return;
+
     $type = $f->type; // Fieldtype instance
     $class = $type->className();
     $val  = $p->get($name);
     if(!$val) return;
+
+    // FieldsetPage stores a Page-like value. Render its stored fields, not its admin/input markup.
+    if ($class === 'FieldtypeFieldsetPage' && $val instanceof Page) {
+        foreach ($val->fields as $sf) {
+            $renderField($val, $sf);
+        }
+        return;
+    }
 
     // Repeater / RepeaterMatrix
     if ($class === 'FieldtypeRepeater' || ($class === 'FieldtypeRepeaterMatrix')) {
         foreach ($val as $item) { // each repeater item is a Page-like object
             foreach ($item->fields as $sf) {
                 /** @var Field $sf */
-                $subName = $sf->name;
-                $subVal  = $item->get($subName);
-                if(!$subVal) continue;
-                // Prefer render() for formatting if available
-                try {
-                    $printBlock($item->render($subName));
-                } catch (\Throwable $e) {
-                    $printBlock((string)$subVal);
-                }
+                $renderField($item, $sf);
             }
         }
         return;
@@ -86,11 +96,11 @@ $renderField = function(Page $p, Field $f) use ($printBlock) {
 
     // Page Reference (render titles)
     if ($class === 'FieldtypePage') {
-        if($val->className() === 'PageArray') {
+        if(is_object($val) && method_exists($val, 'className') && $val->className() === 'PageArray') {
             $items = $val;
         } else {
-            $pageArrary = new PageArray();
-            $pageArrary->add($val);
+            $items = new PageArray();
+            $items->add($val);
         }
         foreach ($items as $it) {
             if($it->className() === 'Page') {
@@ -100,9 +110,26 @@ $renderField = function(Page $p, Field $f) use ($printBlock) {
         return;
     }
 
+    // Options: include human labels, never stored numeric IDs.
+    if ($class === 'FieldtypeOptions') {
+        $items = is_iterable($val) ? $val : [$val];
+        foreach ($items as $option) {
+            $label = "";
+            if(is_object($option)) {
+                $label = trim((string) ($option->title ?? $option->value ?? ""));
+            } elseif(is_scalar($option)) {
+                $label = trim((string) $option);
+            }
+            if($label !== "" && !is_numeric($label)) {
+                $printBlock($label);
+            }
+        }
+        return;
+    }
+
     // Images / Files (include captions/descriptions if present)
     if ($class === 'FieldtypeImage' || $class == 'FieldtypeFile') {
-        $files = $val->className()  === 'Pagefiles' ? $val : null;
+        $files = is_object($val) && method_exists($val, 'className') && $val->className()  === 'Pagefiles' ? $val : null;
         if($files) foreach ($files as $fitem) {
             $desc = $sanitizer->text($fitem->description ?? '');
             if($desc !== '') $printBlock($desc);
@@ -112,11 +139,18 @@ $renderField = function(Page $p, Field $f) use ($printBlock) {
         return;
     }
 
-    // Default: let PW render the field (handles textarea/RTE, etc.)
-    try {
-        $printBlock($p->render($name));
-    } catch (\Throwable $e) {
-        $printBlock((string)$val);
+    // Default: use stored values only. Broad Page::render($field) can expose admin labels/notes.
+    if (is_scalar($val)) {
+        $value = trim((string) $val);
+        if($value === '') return;
+        if(is_bool($val)) return;
+        if(is_numeric($value) && !preg_match('/Fieldtype(Text|Textarea|URL|Email)/', $class)) return;
+        $printBlock($value);
+        return;
+    }
+
+    if (is_object($val) && method_exists($val, '__toString')) {
+        $printBlock((string) $val);
     }
 };
 

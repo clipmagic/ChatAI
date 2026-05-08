@@ -551,7 +551,10 @@ class RAG extends Wire
         );
 
         $url = $page->httpUrl(true);
-        $title = (string) $page->title;
+        $title = trim((string) ($content["title"] ?? ""));
+        if ($title === "") {
+            $title = (string) $page->getUnformatted("title");
+        }
         $headings = json_encode($content["heads"]);
         $slug = $page->name;
 
@@ -587,7 +590,7 @@ class RAG extends Wire
         $indexer = $this->chatAI()->indexer();
         $pageLangs = $page->getLanguages();
 
-        if ($pageLangs->count > 0) {
+        if ($pageLangs && $pageLangs->count > 0) {
             $origLang = $user && $user->language ? $user->language : null;
             foreach ($pageLangs as $lang) {
                 $user->setLanguage($lang);

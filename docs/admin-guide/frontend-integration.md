@@ -1,5 +1,7 @@
 ## 7. Frontend Integration
 
+![ChatAI frontend widget](../images/sample-homepage-chat-widget.png)
+
 ChatAI ships with a default frontend widget (PHP), JavaScript, and CSS.
 
 This chapter explains how the widget is structured, which parts can be customised safely, and which attributes must remain stable because they are used by the JavaScript.
@@ -218,7 +220,7 @@ ChatAI requires three render calls to be included in a template context:
 
 - `renderStyles()` — include in `<head>`
 - `renderWidget()` — include before `</body>`
-- `renderScripts()` — include before `</body>`, after the widget
+- `renderScript()` — include before `</body>`, after the widget
 
 These methods output the chatbot CSS, HTML markup, and JavaScript respectively.
 
@@ -229,7 +231,7 @@ $chatai = $modules->get('ChatAI');
 
 echo $chatai->renderStyles();
 echo $chatai->renderWidget();
-echo $chatai->renderScripts();
+echo $chatai->renderScript();
 ```
 
 No frontend output is injected automatically.

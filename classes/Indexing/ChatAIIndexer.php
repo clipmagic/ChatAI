@@ -61,12 +61,13 @@ class ChatAIIndexer extends Wire
     {
         $files = $this->wire('files');
         $ragView = $this->resolveRagView();
-        $html = $files->render($ragView['path'], ['page' => $page], ['allowedPaths', $ragView['allowedPaths']]);
+        $renderPage = clone $page;
+        $html = $files->render($ragView['path'], ['page' => $renderPage], ['allowedPaths', $ragView['allowedPaths']]);
 
         $tt = new WireTextTools();
         $text = $tt->markupToText($html);
 
-        $title = trim((string) $page->get('headline|title'));
+        $title = $this->pageTitleForIndex($page);
         $template = $page->template->name;
         $path = $page->path;
 
@@ -77,11 +78,59 @@ class ChatAIIndexer extends Wire
             ])) . "\n\n";
 
         $content = [];
-        $content['text'] = $context . $text;
-        $content['heads'] = $this->getPageHeadings($page, $langId);
+        $content['title'] = $title;
+        $content['heads'] = $this->getPageHeadings($page, $langId, $html);
+        $headingText = $this->headingsToText($content['heads']);
+        $content['text'] = $context . ($headingText !== '' ? $headingText . "\n\n" : '') . $text;
         $content['slug'] = $page->name;
 
         return $content;
+    }
+
+    /**
+     * Get stable title text without template/render side effects.
+     */
+    public function pageTitleForIndex(Page $page): string
+    {
+        foreach(['headline', 'title'] as $field) {
+            if(!$page->template->hasField($field)) {
+                continue;
+            }
+
+            $value = method_exists($page, 'getUnformatted')
+                ? $page->getUnformatted($field)
+                : $page->get($field);
+            $value = trim((string) $value);
+            if($value !== '') {
+                return $value;
+            }
+        }
+
+        return trim((string) $page->name);
+    }
+
+    /**
+     * Convert extracted heading metadata into weighted plain text for embedding.
+     */
+    protected function headingsToText(array $heads): string
+    {
+        $lines = [];
+
+        $h1 = trim((string) ($heads['h1'] ?? ''));
+        if($h1 !== '') {
+            $lines[] = "H1: {$h1}";
+        }
+
+        foreach(['h2' => 'H2', 'h3' => 'H3'] as $key => $label) {
+            foreach((array) ($heads[$key] ?? []) as $heading) {
+                $heading = trim((string) $heading);
+                if($heading !== '') {
+                    $lines[] = "{$label}: {$heading}";
+                }
+            }
+        }
+
+        return implode("\n", array_values(array_unique($lines)));
     }
 
 

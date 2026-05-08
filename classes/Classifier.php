@@ -118,17 +118,28 @@ class Classifier extends Wire
 
         if ($this->isMeta($t, $dict))      return ['label' => 'meta',       'use_rag' => false];
         if ($this->isGreeting($t, $dict))  return ['label' => 'small_talk', 'use_rag' => false];
-        // Blocked actions first (prevents "change/delete/update" getting into RAG)
-        if ($this->isBlockedAction($t, $dict)) return ['label' => 'blocked_action', 'use_rag' => false];
-
-        // Info-actions should use RAG (summarise/list/show/translate/etc.)
-        if ($this->isInfoAction($t, $dict))    return ['label' => 'info_query', 'use_rag' => true];
 
         $sectionish = $this->hasPageSectionWord($t, $dict);
         $domainHit  = $this->hitsAny($t, $dict['custom_terms_set'] ?? []);
-        if ($this->hasQuestionWord($t, $dict) || $domainHit || $sectionish) {
+
+        if ($this->looksLikeQuestion($t, $dict) && ($domainHit || $this->looksLikeServiceQuestion($t))) {
             return ['label' => 'info_query', 'use_rag' => true];
         }
+
+        // Hard blocked actions first (prevents "delete/remove/change" getting into RAG).
+        if ($this->isHardBlockedAction($t)) return ['label' => 'blocked_action', 'use_rag' => false];
+
+        // Info-actions should use RAG (summarise/list/show/translate/etc.).
+        // Some legacy configs also include show/list in blocked actions.
+        if ($this->isInfoAction($t, $dict))    return ['label' => 'info_query', 'use_rag' => true];
+
+        if ($this->looksLikeQuestion($t, $dict) || $domainHit || $sectionish) {
+            return ['label' => 'info_query', 'use_rag' => true];
+        }
+
+        // Broad blocked action terms are evaluated after questions so phrases like
+        // "how do I book..." do not get blocked by the word "do".
+        if ($this->isBlockedAction($t, $dict)) return ['label' => 'blocked_action', 'use_rag' => false];
 
         // Treat as follow-up only when it's short and referential.
         // Prevents full requests like "tell me about flowers" from being misrouted.
@@ -200,9 +211,9 @@ class Classifier extends Wire
      * @return bool
      */
     protected function hasQuestionWord(string $t, array $dict): bool {
-        if (str_contains($t, '?')) return true;
         foreach ($dict['question_words_set'] as $w => $_) {
-            if (mb_stripos($t, $w) !== false) return true;
+            if (in_array($w, ['do', 'does', 'did', 'can', 'could', 'would', 'should'], true)) continue;
+            if ($this->containsTerm($t, $w)) return true;
         }
         return false;
     }
@@ -212,9 +223,27 @@ class Classifier extends Wire
      * @param array $dict
      * @return bool
      */
+    protected function looksLikeQuestion(string $t, array $dict): bool {
+        return str_contains($t, '?') || $this->hasQuestionWord($t, $dict);
+    }
+
+    /**
+     * @param string $t
+     * @return bool
+     */
+    protected function looksLikeServiceQuestion(string $t): bool {
+        return (bool) preg_match('~\b(do|can|could|would)\s+you\s+(treat|offer|provide|help|see|handle)\b~iu', $t);
+    }
+
+    /**
+     * @param string $t
+     * @param array $dict
+     * @return bool
+     */
     protected function hasPageSectionWord(string $t, array $dict): bool {
         foreach ($dict['stop_soft_set'] as $w => $_) {
-            if (mb_stripos($t, $w) !== false) return true;
+            if (in_array($w, ['get', 'have', 'make', 'do', 'provide', 'offer', 'use', 'help', 'support', 'can', 'could', 'would'], true)) continue;
+            if ($this->containsTerm($t, $w)) return true;
         }
         return false;
     }
@@ -238,7 +267,7 @@ class Classifier extends Wire
      */
     protected function isMeta(string $t, array $dict): bool {
         foreach ($dict['meta_terms_set'] as $w => $_) {
-            if ($w !== '' && mb_stripos($t, $w) !== false) return true;
+            if ($this->containsTerm($t, $w)) return true;
         }
         return false;
     }
@@ -249,7 +278,29 @@ class Classifier extends Wire
      * @return bool
      */
     protected function isBlockedAction(string $t, array $dict): bool {
-        return $this->hitsAny($t, $dict['blocked_action_verbs_set'] ?? []);
+        $blocked = $dict['blocked_action_verbs_set'] ?? [];
+        foreach (['delete', 'remove', 'add', 'change', 'enable', 'disable', 'remember', 'forget'] as $term) {
+            $blocked[$term] = true;
+        }
+
+        return $this->hitsAny($t, $blocked);
+    }
+
+    /**
+     * @param string $t
+     * @return bool
+     */
+    protected function isHardBlockedAction(string $t): bool {
+        return $this->hitsAny($t, array_fill_keys([
+            'delete',
+            'remove',
+            'add',
+            'change',
+            'enable',
+            'disable',
+            'remember',
+            'forget',
+        ], true));
     }
 
     /**
@@ -269,7 +320,7 @@ class Classifier extends Wire
      */
     protected function looksLikeFollowup(string $t, array $dict): bool {
         foreach ($dict['followup_terms_set'] as $w => $_) {
-            if (mb_stripos($t, $w) !== false) return true;
+            if ($this->containsTerm($t, $w)) return true;
         }
         return ($t === '...' || $t === '…');
     }
@@ -281,9 +332,23 @@ class Classifier extends Wire
      */
     protected function hitsAny(string $t, array $set): bool {
         foreach ($set as $term => $_) {
-            if ($term !== '' && mb_stripos($t, $term) !== false) return true;
+            if ($this->containsTerm($t, $term)) return true;
         }
         return false;
+    }
+
+    /**
+     * Match dictionary terms as phrases/words, not arbitrary substrings.
+     *
+     * @param string $text
+     * @param string $term
+     * @return bool
+     */
+    protected function containsTerm(string $text, string $term): bool {
+        $term = trim($term);
+        if ($term === '') return false;
+
+        return (bool) preg_match('~(?<![\pL\pN])' . preg_quote($term, '~') . '(?![\pL\pN])~iu', $text);
     }
 
 }

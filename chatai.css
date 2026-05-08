@@ -100,6 +100,8 @@
     display: grid;
     grid-template-rows: max-content 1fr max-content max-content;
     opacity: 1;
+    height: auto;
+    min-height: 0;
     max-height: 80vh;
     width: min(70%, 50ch);
     border: none;
@@ -166,10 +168,10 @@
     overflow-y: scroll;
     overscroll-behavior: contain;
     min-height: 0;
+    font-size: clamp(0.9rem, 0.9rem + 0.1vw, 1rem);
 }
 
 .chatbot-messages {
-    font-size: clamp(0.9rem, 0.9rem + 0.1vw, 1rem);
     background: var(--chat-bg);
     display: flex;
     flex-direction: column;
@@ -226,25 +228,33 @@
     align-items: end;
 }
 
-#chatbot-dialog input[type="text"].chatbot-input,
+#chatbot-dialog input.chatbot-input,
 .chatbot-submit {
     font: inherit;
     color: inherit;
 }
 /* overrides PW default theme input[type="text"] styles */
-#chatbot-dialog input[type="text"].chatbot-input {
+#chatbot-input.chatbot-input {
     appearance: none;
     -webkit-appearance: none;
-    border: none;
+    box-sizing: border-box;
+    display: block;
+    width: 100%;
+    max-width: none;
+    height: auto;
+    margin: 0;
+    border: 0;
     border-bottom: 1px solid var(--chat-border);
+    border-radius: 0;
     background: transparent;
     padding: 0.55rem 0.2rem;
     line-height: 1.2;
     font-family: var(--chat-font);
+    box-shadow: none;
 }
 
 /* overrides PW default theme input[type="text"] styles */
-#chatbot-dialog input[type="text"].chatbot-input::placeholder {
+#chatbot-dialog input.chatbot-input::placeholder {
     color: color-mix(in srgb, var(--chat-fg) 55%, transparent);
     opacity: 1;                 /* FF placeholder opacity quirk */
 }
@@ -453,4 +463,3 @@
  * 5) Footer styling: refine layout and spacing for disclaimer + “talk to a human” / “book” links; consider mobile-specific tweaks and per-site variants.
  * 6) File upload affordance (future feature): visual design and focus/hover states for an attach button once backend support is in place.
  */
-

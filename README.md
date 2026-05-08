@@ -1,5 +1,8 @@
 # ChatAI
 
+![ChatAI - ProcessWire chatbot](docs/images/chatai-readme.png)
+
+
 ChatAI is a ProcessWire chatbot module. It keeps chatbot behaviour inside the site:
 
 - prompt construction
@@ -13,9 +16,9 @@ Chat generation uses models configured in AgentTools. Configure provider credent
 
 ## Requirements
 
-- ProcessWire 3.0.201 or newer
+- ProcessWire 3.0.255 or newer
 - PHP 8.0 or newer
-- AgentTools 7 or newer
+- AgentTools 11 or newer
 - TextformatterEntities
 - TextformatterNewlineBR
 

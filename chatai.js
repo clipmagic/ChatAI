@@ -1,4 +1,10 @@
 // chatai.js - frontend widget
+(function () {
+if (window.__CHATAI_WIDGET_LOADED__) {
+    return;
+}
+window.__CHATAI_WIDGET_LOADED__ = true;
+
 /*
 |--------------------------------------------------------------------------
 | Message limit & warning flow (OpenAI-call based)
@@ -197,17 +203,22 @@ let chatai = {
     },
 
     go: () => {
+        const messagesRoot = document.getElementById('chatbot-messages');
+        const form = document.getElementById('chatbot-form');
+
+        if (!messagesRoot || !form) {
+            return;
+        }
 
         // Replay previous thread (if any)
         try {
             const prior = chataiStore.load();
             for (const rec of prior) {
                 if (rec.name) {
-                    const wrap = document.getElementById('chatbot-messages');
                     const label = document.createElement('div');
                     label.className = 'chatbot-name';
                     label.textContent = rec.name;
-                    wrap.appendChild(label);
+                    messagesRoot.appendChild(label);
                 }
                 if (rec.type === 'html') chatai.appendHTML(rec.role, rec.content, null, false);
                 else chatai.appendMessage(rec.role, rec.content, false);
@@ -246,7 +257,6 @@ let chatai = {
         }
 
 
-        const form = document.getElementById('chatbot-form');
         const status = document.getElementById('chatbot-status');
         const statusVisible = status?.querySelector('.chatbot-status-visible') || null;
         const statusSr = status?.querySelector('.chatbot-status-sr') || null;
@@ -272,6 +282,7 @@ let chatai = {
                 if (submitBtn) submitBtn.disabled = true;
 
                 status.hidden = false;
+                status.removeAttribute('hidden');
                 status.setAttribute('aria-busy', 'true');
 
                 if (clearWrapper) clearWrapper.hidden = true;
@@ -359,13 +370,15 @@ let chatai = {
 
             // At this point we know we are sending a real request
             setBusy(true);
+            await new Promise(resolve => requestAnimationFrame(resolve));
 
             try {
                 const url = '/chatai-api/';
+                const cta = document.getElementById('chatbot-cta');
                 const data = {
                     msg: message,
                     ln: input.dataset.ln,
-                    pid: document.getElementById('chatbot-cta').dataset.pid,
+                    pid: cta?.dataset?.pid || '',
                     url: window.location.href
                 };
 
@@ -376,7 +389,8 @@ let chatai = {
 
                     // Populate CTA div if the html exists from the hook
                     if(res.cta && typeof res.cta === 'string' && res.cta.trim()) {
-                        document.getElementById('chatbot-cta').innerHTML = res.cta.trim()
+                        const cta = document.getElementById('chatbot-cta');
+                        if (cta) cta.innerHTML = res.cta.trim()
                     }
 
 
@@ -465,3 +479,4 @@ let chatai = {
     },
 };
 chatai.go();
+})();

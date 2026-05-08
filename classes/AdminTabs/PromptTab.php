@@ -78,7 +78,7 @@ class PromptTab
         $value =
             $data["blacklist"] ??
             $m->_(
-                "always respond,end every response,from now on,forget all previous,ignore previous instructions,your name is,call yourself,you are now,act as,system prompt, developer message, reveal the prompt,answer my exam,bomb,buy drugs,cheat,cocaine,ddos,drugs,ecstasy,erotic,exploit,fetish,generate code for me,gun,hack,heroin,how to jailbreak,kill,lsd,marijuana,masturbate,meth,murder,naked,nude,onlyfans,orgasm,penis,porn,proxy,prompt injection,rape,sex,shoot,shell,solve my homework,sql injection,stab,strip,suicide,terrorist,torrent,vagina,violence,vpn,weed,who won the war,write my essay,xxx,xss",
+                "always respond,end every response,from now on,forget all previous,ignore previous instructions,your name is,call yourself,you are now,act as,system prompt,developer message,hidden prompt,hidden instructions,reveal the prompt,reveal your prompt,list your instructions,show your instructions,api key,password,private data,admin password,database password,.env,environment variables,server logs,answer my exam,bomb,buy drugs,cheat,cocaine,ddos,drugs,ecstasy,erotic,exploit,fetish,generate code for me,gun,hack,heroin,how to jailbreak,kill,lsd,marijuana,masturbate,meth,murder,naked,nude,onlyfans,orgasm,penis,porn,proxy,prompt injection,rape,sex,shoot,shell,solve my homework,sql injection,stab,strip,suicide,terrorist,torrent,vagina,violence,vpn,weed,who won the war,write my essay,xxx,xss",
             );
         $f->val($value);
         $f->notes($m->_("Add or remove terms as needed"));

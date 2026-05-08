@@ -40,20 +40,22 @@ During installation, ChatAI will:
 - initialise default configuration values,
 - and prepare internal services.
 
-If installation fails, no partial configuration should remain.
-
 ---
 
 ### First-Time Setup Checklist
 
-After installation, review the ChatAI admin screens and complete the following minimum steps:
+After installing the module, complete these steps in order:
 
-- Configure at least one chat-capable model entry in AgentTools.
-- Configure a separate embeddings-capable model entry in AgentTools.
-- In **Modules > ChatAI**, select the AgentTools chat model and the AgentTools embedding model.
-- In **Modules > ChatAI**, review the module permissions and frontend asset/file paths.
-- In **Setup > ChatAI**, review the Prompt, Dictionary, and Personalise tabs, then save the configuration.
-- Review default limits and safeguards.
+1. Install prerequisites.
+   Confirm AgentTools is installed and available in the ProcessWire admin.
+2. Configure two AgentTools model entries.
+   Create one chat-capable model entry and one embeddings-capable model entry.
+3. Configure the ChatAI module.
+   In **Modules > ChatAI**, select the AgentTools chat model, select the AgentTools embedding model, and review module-level settings. See [ChatAI Module Configuration](chatai-config.md).
+4. Configure ProcessChatAI.
+   In **Setup > ChatAI**, review Prompt, Dictionary, Personalise, RAG, and dashboard settings, then save the configuration. See [ProcessChatAI Configuration](processchatai-config.md).
+5. Add frontend integration.
+   Add the widget, stylesheet, and script calls to your site templates. See [Frontend Integration](frontend-integration.md).
 
 ChatAI requires an embeddings-capable model for content indexing and contextual answers.
 

@@ -9,6 +9,8 @@ use stdClass;
 
 class ChatAI extends WireData implements Module, ConfigurableModule
 {
+    public const MIN_AGENTTOOLS_VERSION = 11;
+
     public const CHATAI_VEC_TABLE = "chatai_vec_chunks";
 
     const dbTableName = "chatai";
@@ -32,6 +34,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     protected ?\ProcessWire\ChatAIModelClient $modelClient = null;
 
     protected ?\ProcessWire\ChatAIPromptService $promptService = null;
+
+    protected array $renderedFrontendAssets = [];
 
     public function construct()
     {
@@ -79,8 +83,20 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $this->promptService->setWire($this->wire());
         }
 
-        if ($this->wire("process") && !$this->modelClient()->modelEntry((string) ($this->agenttools_model_id ?? ""))) {
-            $this->warning("AgentTools model missing; ChatAI model-backed replies may not function.");
+        if ($this->wire("process")) {
+            $agentToolsInfo = (array) $this->wire("modules")->getModuleInfo("AgentTools");
+            $agentToolsVersion = (int) ($agentToolsInfo["version"] ?? 0);
+            if ($agentToolsVersion < self::MIN_AGENTTOOLS_VERSION) {
+                $this->warning(sprintf(
+                    $this->_("ChatAI requires AgentTools %d or newer; installed AgentTools reports version %d."),
+                    self::MIN_AGENTTOOLS_VERSION,
+                    $agentToolsVersion,
+                ));
+            }
+
+            if (!$this->modelClient()->modelEntry((string) ($this->agenttools_model_id ?? ""))) {
+                $this->warning("AgentTools model missing; ChatAI model-backed replies may not function.");
+            }
         }
 
         // Hooks
@@ -104,6 +120,36 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             $this->processRagForPage($page, $cfg, [
                 "mode" => "on_save",
                 "contentChanged" => $contentChanged,
+                "dryRun" => false,
+            ]);
+        });
+
+        $this->addHookAfter("Pages::published", function (HookEvent $event) {
+            $page = $event->arguments(0);
+
+            $cfg = (array) $this->promptService()->loadPromptSettings();
+            if (empty($cfg["chunk_on_save"])) {
+                return;
+            }
+
+            $this->processRagForPage($page, $cfg, [
+                "mode" => "on_save",
+                "contentChanged" => false,
+                "dryRun" => false,
+            ]);
+        });
+
+        $this->addHookAfter("Pages::unpublished", function (HookEvent $event) {
+            $page = $event->arguments(0);
+
+            $cfg = (array) $this->promptService()->loadPromptSettings();
+            if (empty($cfg["chunk_on_save"])) {
+                return;
+            }
+
+            $this->processRagForPage($page, $cfg, [
+                "mode" => "on_save",
+                "contentChanged" => false,
                 "dryRun" => false,
             ]);
         });
@@ -178,6 +224,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         $contentChanged =
             $mode === "on_save" ? !empty($opts["contentChanged"]) : true;
         $forceRebuild = !empty($opts["forceRebuild"]); // bulk only: rebuild even if already in DB
+        $missingVectorsOnSave = false;
 
         $out = [
             "page_id" => (int) $page->id,
@@ -226,8 +273,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         // On-save mode: only do work if meaningful content changed
         if ($mode === "on_save" && !$contentChanged) {
-            $out["skipped"] = "no_content_change";
-            return $out;
+            $stats = $rag->getPageVectorStats($page->id);
+            if (!empty($stats["chunks"])) {
+                $out["skipped"] = "no_content_change";
+                return $out;
+            }
+            $missingVectorsOnSave = true;
         }
 
         if ($mode === "bulk") {
@@ -309,7 +360,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
             }
         }
 
-        $out["indexed_replaced"] = true;
+        if ($missingVectorsOnSave) {
+            $out["indexed_new"] = true;
+        } else {
+            $out["indexed_replaced"] = true;
+        }
         return $out;
     }
 
@@ -384,6 +439,11 @@ class ChatAI extends WireData implements Module, ConfigurableModule
      */
     public function renderWidget(): string
     {
+        if (!empty($this->renderedFrontendAssets['widget'])) {
+            return '';
+        }
+        $this->renderedFrontendAssets['widget'] = true;
+
         return $this->promptService()->getWidget((string) $this->widget);
     }
 
@@ -392,7 +452,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
      */
     public function renderStyles(): string
     {
-        $css = "<link rel='stylesheet' href='$this->css' type='text/css'>";
+        if (!empty($this->renderedFrontendAssets['styles'])) {
+            return '';
+        }
+        $this->renderedFrontendAssets['styles'] = true;
+
+        $css = "<link id='chatai-css' rel='stylesheet' href='$this->css' type='text/css'>";
         return $css;
     }
 
@@ -401,7 +466,12 @@ class ChatAI extends WireData implements Module, ConfigurableModule
      */
     public function renderScript(): string
     {
-        $js = "<script src='$this->js' ></script>";
+        if (!empty($this->renderedFrontendAssets['script'])) {
+            return '';
+        }
+        $this->renderedFrontendAssets['script'] = true;
+
+        $js = "<script id='chatai-js' src='$this->js' defer></script>";
         return $js;
     }
 
@@ -942,7 +1012,7 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         if ($label === "blocked_action") {
             $result->reply =
-                $cfgLang("blocked_action_verbs_reply") ?:
+                $cfgLang("blocked_action_reply") ?:
                 "I’m sorry. I can’t do that. Please ask me something else about this site.";
             $payload["status"] = $label;
             $payload["reply"] = $result->reply;
@@ -978,9 +1048,13 @@ class ChatAI extends WireData implements Module, ConfigurableModule
 
         if ($retrievalScope === "page") {
             $p = $this->wire("pages")->get((int) $pid);
-            if ($p && $p->id && !$this->rag->shouldIndexPage($p, $cfg)) {
+            if (!$p || !$p->id || !$p->viewable($user)) {
                 $label = "no_access";
                 $top = [];
+            } elseif (!$this->rag->shouldIndexPage($p, $cfg)) {
+                // A viewable page can still be outside ChatAI's vector template rules.
+                // Fall back to site retrieval rather than saying the page is inaccessible.
+                $retrievalScope = "site";
             }
         }
 

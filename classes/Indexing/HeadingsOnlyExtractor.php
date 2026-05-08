@@ -2,18 +2,15 @@
 
 /**
  * HeadingsOnlyExtractor
- * Render full page (as guest, per language) and extract only H1/H2/H3 texts.
+ * Extract H1/H2/H3 texts from the RAG view HTML.
  */
 trait HeadingsOnlyExtractor
 {
     /**
      * Get H1/H2/H3 for a page/lang with a small per-page cache.
      */
-    protected function getPageHeadings(Page $page, int $langId = 0): array
+    protected function getPageHeadings(Page $page, int $langId = 0, string $html = ""): array
     {
-        $config = $this->wire("config");
-        $isDev = str_contains($config->httpHost, "ddev.site");
-
         $empty = ["h1" => "", "h2" => [], "h3" => []];
 
         if (!$page->id) {
@@ -23,58 +20,272 @@ trait HeadingsOnlyExtractor
         $rev = (int) $page->modified;
         $key = "chatai:headings:pid{$page->id}:lid{$langId}:rev{$rev}";
         $cache = $this->wire("cache");
+
+        if ($html !== "") {
+            $out = $this->mergeHeadingOutput(
+                $this->extractH123FromHtml($html),
+                $this->extractTemplateFileHeadings(clone $page),
+            );
+            $out = $this->normalizeHeadingOutput($out, $page);
+            $cache->saveFor("chatai", $key, $out, 3600);
+            return $out;
+        }
+
         $hit = $cache->getFor("chatai", $key);
         if ($hit !== null) {
             return $hit;
         }
 
-        $html = $this->renderPageAsGuest($page, $langId);
-        if ($html === "") {
-            $cache->saveFor("chatai", $key, $empty, 1800);
-            return $empty;
-        }
-
-        $out = $this->extractH123FromHtml($html);
-        $out["h2"] = array_slice(array_values(array_unique($out["h2"])), 0, 12);
-        $out["h3"] = array_slice(array_values(array_unique($out["h3"])), 0, 24);
+        $out = $this->normalizeHeadingOutput($empty, $page);
         $cache->saveFor("chatai", $key, $out, 3600);
         return $out;
     }
 
     /**
-     * Render the page exactly as an anonymous user for the given language.
-     * Restores the previous user/language after render.
+     * Render the page template file only, without re-entering Page::render().
+     *
+     * @param Page $page
+     * @return array
      */
-    protected function renderPageAsGuest(Page $page, int $langId): string
+    protected function extractTemplateFileHeadings(Page $page): array
     {
-        $users = $this->wire("users");
-        $languages = $this->wire("languages");
-
-        $prevUser = $this->wire("user");
-        $guest = $users->getGuestUser();
-        $this->wire("user", $guest);
-
-        $prevLang =
-            $languages && $prevUser && $prevUser->language
-                ? $prevUser->language
-                : null;
-        if ($languages && $langId) {
-            $lang = $languages->get($langId);
-            if ($lang && $lang->id) {
-                $languages->setLanguage($lang);
-            }
+        $empty = ["h1" => "", "h2" => [], "h3" => []];
+        $filename = $this->templateFilename($page);
+        if ($filename === "") {
+            return $empty;
         }
 
         try {
-            $out = (string) $page->render();
+            $html = $this->renderTemplateFileQuietly($filename, $this->templateRenderVars($page, $filename));
         } catch (\Throwable $e) {
-            $out = "";
+            $this->wire("log")->save(
+                "chatai",
+                "Heading template fallback skipped for {$page->template->name} page {$page->id}: " . $e->getMessage(),
+            );
+            return $empty;
         }
 
-        if ($languages && $prevLang) {
-            $languages->setLanguage($prevLang);
+        return $html !== "" ? $this->extractH123FromHtml($html) : $empty;
+    }
+
+    /**
+     * Render heading fallback templates without surfacing non-fatal site-template warnings.
+     *
+     * @param string $filename
+     * @param array $vars
+     * @return string
+     */
+    protected function renderTemplateFileQuietly(string $filename, array $vars): string
+    {
+        set_error_handler(static function ($severity) {
+            return (bool) ($severity & (
+                E_WARNING |
+                E_NOTICE |
+                E_USER_WARNING |
+                E_USER_NOTICE |
+                E_DEPRECATED |
+                E_USER_DEPRECATED
+            ));
+        });
+
+        try {
+            return (string) $this->wire("files")->render(
+                $filename,
+                $vars,
+                ["allowedPaths" => [$this->wire("config")->paths->templates]],
+            );
+        } finally {
+            restore_error_handler();
         }
-        $this->wire("user", $prevUser);
+    }
+
+    /**
+     * @param Page $page
+     * @return string
+     */
+    protected function templateFilename(Page $page): string
+    {
+        $config = $this->wire("config");
+        $filename = (string) ($page->template->filename ?? "");
+        if ($filename !== "" && is_file($filename)) {
+            return $filename;
+        }
+
+        $candidate = $config->paths->templates . $page->template->name . ".php";
+        return is_file($candidate) ? $candidate : "";
+    }
+
+    /**
+     * Build generic variables for rendering a template file as a fragment.
+     *
+     * @param Page $page
+     * @param string $filename
+     * @return array
+     */
+    protected function templateRenderVars(Page $page, string $filename): array
+    {
+        $vars = [
+            "page" => $page,
+            "pages" => $this->wire("pages"),
+            "config" => $this->wire("config"),
+            "files" => $this->wire("files"),
+            "sanitizer" => $this->wire("sanitizer"),
+            "user" => $this->wire("user"),
+            "input" => $this->wire("input"),
+            "modules" => $this->wire("modules"),
+            "session" => $this->wire("session"),
+            "cache" => $this->wire("cache"),
+            "database" => $this->wire("database"),
+            "fields" => $this->wire("fields"),
+            "templates" => $this->wire("templates"),
+            "roles" => $this->wire("roles"),
+            "permissions" => $this->wire("permissions"),
+            "languages" => $this->wire("languages"),
+            "pageTitle" => $this->headingPageTitle($page),
+            "homepage" => $this->wire("pages")->get(1),
+        ];
+
+        foreach ($this->templateVariableNames($filename) as $name) {
+            if (array_key_exists($name, $vars)) {
+                continue;
+            }
+
+            try {
+                $value = $this->wire($name);
+            } catch (\Throwable $e) {
+                $value = null;
+            }
+
+            if ($value !== null) {
+                $vars[$name] = $value;
+                continue;
+            }
+
+            $pageValue = $this->templateVariablePage($name);
+            if ($pageValue && $pageValue->id) {
+                $vars[$name] = $pageValue;
+            }
+        }
+
+        return $vars;
+    }
+
+    /**
+     * @param Page $page
+     * @return string
+     */
+    protected function headingPageTitle(Page $page): string
+    {
+        foreach (["headline", "title"] as $field) {
+            if (!$page->template->hasField($field)) {
+                continue;
+            }
+
+            $value = method_exists($page, "getUnformatted")
+                ? $page->getUnformatted($field)
+                : $page->get($field);
+            $value = trim((string) $value);
+            if ($value !== "") {
+                return $value;
+            }
+        }
+
+        return trim((string) $page->name);
+    }
+
+    /**
+     * Resolve common site variables conventionally, without hardcoding site-specific modules.
+     *
+     * @param string $name
+     * @return Page|null
+     */
+    protected function templateVariablePage(string $name): ?Page
+    {
+        if (!preg_match('/^[A-Za-z][A-Za-z0-9_-]*$/', $name)) {
+            return null;
+        }
+
+        try {
+            $page = $this->wire("pages")->get("name=" . $this->wire("sanitizer")->pageName($name) . ", include=all");
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        return $page && $page->id ? $page : null;
+    }
+
+    /**
+     * @param string $filename
+     * @return array
+     */
+    protected function templateVariableNames(string $filename): array
+    {
+        $source = is_file($filename) ? file_get_contents($filename) : "";
+        if ($source === "") {
+            return [];
+        }
+
+        $skip = [
+            "GLOBALS" => true,
+            "_SERVER" => true,
+            "_GET" => true,
+            "_POST" => true,
+            "_FILES" => true,
+            "_COOKIE" => true,
+            "_SESSION" => true,
+            "_REQUEST" => true,
+            "_ENV" => true,
+            "this" => true,
+        ];
+        $names = [];
+
+        foreach (token_get_all($source) as $token) {
+            if (!is_array($token) || $token[0] !== T_VARIABLE) {
+                continue;
+            }
+
+            $name = substr($token[1], 1);
+            if ($name !== "" && empty($skip[$name])) {
+                $names[$name] = $name;
+            }
+        }
+
+        return array_values($names);
+    }
+
+    /**
+     * @param array $primary
+     * @param array $fallback
+     * @return array
+     */
+    protected function mergeHeadingOutput(array $primary, array $fallback): array
+    {
+        $out = array_merge(["h1" => "", "h2" => [], "h3" => []], $primary);
+        $fallback = array_merge(["h1" => "", "h2" => [], "h3" => []], $fallback);
+
+        if ($out["h1"] === "" && $fallback["h1"] !== "") {
+            $out["h1"] = $fallback["h1"];
+        }
+        $out["h2"] = array_merge((array) $out["h2"], (array) $fallback["h2"]);
+        $out["h3"] = array_merge((array) $out["h3"], (array) $fallback["h3"]);
+
+        return $out;
+    }
+
+    /**
+     * @param array $out
+     * @param Page $page
+     * @return array
+     */
+    protected function normalizeHeadingOutput(array $out, Page $page): array
+    {
+        $out = array_merge(["h1" => "", "h2" => [], "h3" => []], $out);
+        if ($out["h1"] === "") {
+            $out["h1"] = $this->headingPageTitle($page);
+        }
+        $out["h2"] = array_slice(array_values(array_unique($out["h2"])), 0, 12);
+        $out["h3"] = array_slice(array_values(array_unique($out["h3"])), 0, 24);
+
         return $out;
     }
 
