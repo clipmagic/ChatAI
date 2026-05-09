@@ -54,7 +54,9 @@ After installing the module, complete these steps in order:
    In **Modules > ChatAI**, select the AgentTools chat model, select the AgentTools embedding model, and review module-level settings. See [ChatAI Module Configuration](chatai-config.md).
 4. Configure ProcessChatAI.
    In **Setup > ChatAI**, review Prompt, Dictionary, Personalise, RAG, and dashboard settings, then save the configuration. See [ProcessChatAI Configuration](processchatai-config.md).
-5. Add frontend integration.
+5. Index the site content
+   From the **Setup > ChatAI** Dashboard tab, bulk (re)index the site content to populate the RAG vector database.
+6. Add frontend integration.
    Add the widget, stylesheet, and script calls to your site templates. See [Frontend Integration](frontend-integration.md).
 
 ChatAI requires an embeddings-capable model for content indexing and contextual answers.
