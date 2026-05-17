@@ -1,6 +1,6 @@
 # ChatAI
 
-![ChatAI - ProcessWire chatbot](docs/images/chatai-readme.png)
+![ChatAI - ProcessWire chatbot](docs/images/chatai-readme.jpg)
 
 
 ChatAI is a ProcessWire chatbot module. It keeps chatbot behaviour inside the site:
