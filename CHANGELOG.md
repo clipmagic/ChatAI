@@ -1,4 +1,10 @@
 ###ChatAI and ProcessChatAI Change Log
+##0.0.6Alpha
+- Make frontend CSS and JavaScript asset URLs respect ProcessWire's root URL so subdirectory installs resolve module assets correctly.
+- Make RAG vector cleanup tolerant of missing `chatai_vec_chunks` during uninstall, partial reinstall, or failed install recovery.
+- Execute ChatAI install table creation statements individually for better compatibility with database drivers that do not accept multi-statement queries.
+- Include the README image referenced by the module documentation in the packaged ChatAI files.
+
 ##0.0.5Alpha
 - Require AgentTools 11 or newer and ProcessWire 3.0.255 or newer.
 - Fix first Dashboard view in Setup > ChatAI by making the insights JSON renderer callable from DashboardTab.
