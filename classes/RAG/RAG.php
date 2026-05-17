@@ -489,9 +489,22 @@ class RAG extends Wire
      * 3) RENDER → TEXT → CHUNKS     *
      *********************************/
 
+    protected function vectorTableExists(): bool
+    {
+        try {
+            return (bool) $this->wire("database")->tableExists(self::CHATAI_VEC_TABLE);
+        } catch (\Throwable $e) {
+            return false;
+        }
+    }
+
     /** Delete all vectors for a page (optionally limited to one lang). */
     public function deletePageVectors(Page $page, ?int $langId = null): void
     {
+        if (!$this->vectorTableExists()) {
+            return;
+        }
+
         $db = $this->wire("database");
         if ($langId === null) {
             $stmt = $db->prepare(
@@ -511,6 +524,10 @@ class RAG extends Wire
     /** Delete all vectors for a language. */
     public function deleteLanguageVectors(int $langId): void
     {
+        if (!$this->vectorTableExists()) {
+            return;
+        }
+
         $db = $this->wire("database");
         $stmt = $db->prepare(
             "DELETE FROM `" . self::CHATAI_VEC_TABLE . "` WHERE lang_id=?",

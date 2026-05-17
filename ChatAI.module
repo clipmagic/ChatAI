@@ -434,6 +434,24 @@ class ChatAI extends WireData implements Module, ConfigurableModule
     }
 
     /**
+     * Resolve module-configured asset paths like /site/modules/... to public URLs.
+     */
+    protected function configuredAssetUrl(string $path): string
+    {
+        $path = trim($path);
+        if ($path === '') {
+            return '';
+        }
+
+        if (preg_match('~^(?:https?:)?//~i', $path)) {
+            return $path;
+        }
+
+        $rootUrl = rtrim((string) $this->wire('config')->urls->root, '/');
+        return $rootUrl . '/' . ltrim($path, '/');
+    }
+
+    /**
      * @return string
      * @throws WireException
      */
@@ -457,7 +475,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
         $this->renderedFrontendAssets['styles'] = true;
 
-        $css = "<link id='chatai-css' rel='stylesheet' href='$this->css' type='text/css'>";
+        $href = $this->wire('sanitizer')->entities($this->configuredAssetUrl((string) $this->css));
+        $css = "<link id='chatai-css' rel='stylesheet' href='$href' type='text/css'>";
         return $css;
     }
 
@@ -471,7 +490,8 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         }
         $this->renderedFrontendAssets['script'] = true;
 
-        $js = "<script id='chatai-js' src='$this->js' defer></script>";
+        $src = $this->wire('sanitizer')->entities($this->configuredAssetUrl((string) $this->js));
+        $js = "<script id='chatai-js' src='$src' defer></script>";
         return $js;
     }
 
@@ -1923,7 +1943,9 @@ class ChatAI extends WireData implements Module, ConfigurableModule
         SQL;
 
         try {
-            $db->query($sql);
+            foreach (array_filter(array_map('trim', explode(';', $sql))) as $statement) {
+                $db->exec($statement);
+            }
         } catch (\Throwable $e) {
             wire("log")->save(
                 "errors",
