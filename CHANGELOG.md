@@ -4,6 +4,10 @@
 - Make RAG vector cleanup tolerant of missing `chatai_vec_chunks` during uninstall, partial reinstall, or failed install recovery.
 - Execute ChatAI install table creation statements individually for better compatibility with database drivers that do not accept multi-statement queries.
 - Include the README image referenced by the module documentation in the packaged ChatAI files.
+- Fix the dashboard response after running Re-index & Reconcile so the full Setup > ChatAI dashboard renders after the action completes.
+- Save ProcessChatAI prompt settings with an upsert so new installs create the initial `chatai_prompt` row on first save.
+- Fix ProcessChatAI default prompt-setting collection so new installs save real form defaults rather than an empty JSON array.
+- Initialize default prompt settings before dashboard reindex actions so clean-install reindexing uses the same saved config it creates.
 
 ##0.0.5Alpha
 - Require AgentTools 11 or newer and ProcessWire 3.0.255 or newer.

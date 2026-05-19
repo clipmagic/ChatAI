@@ -528,7 +528,10 @@ PROMPT;
         $db = $this->wire('database');
         $table = $chatai::dbTablePrompt;
 
-        $stmt = $db->prepare("UPDATE `$table` SET json = :json WHERE id = 1 LIMIT 1");
+        $stmt = $db->prepare(
+            "INSERT INTO `$table` (id, json) VALUES (1, :json) " .
+            "ON DUPLICATE KEY UPDATE json = VALUES(json)"
+        );
         $stmt->bindValue(':json', $json, \PDO::PARAM_STR);
 
         $ok = $stmt->execute();

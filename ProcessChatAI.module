@@ -458,6 +458,73 @@ class ProcessChatAI extends Process
     }
 
     /**
+     * Ensure clean installs have prompt settings before dashboard actions use them.
+     *
+     * @return array
+     * @throws WireException
+     * @throws WirePermissionException
+     */
+    protected function ensurePromptSettings(): array
+    {
+        $svc = $this->chatAI()->promptService();
+        $cfg = $svc->loadPromptSettings(true);
+        if(!empty($cfg)) return $cfg;
+
+        $form = $this->wire('modules')->get('InputfieldForm');
+        $form->attr('name+id', $this->formName);
+
+        $tabView = [];
+        foreach($this->tabs($tabView) as $tab) {
+            $out = $tab->build($form, []);
+            $form = $out['form'];
+        }
+
+        $cfg = $this->getValues($form);
+        if(!empty($cfg)) {
+            $svc->savePromptSettings($cfg);
+        }
+
+        return $cfg;
+    }
+
+    /**
+     * @param string $message
+     * @param string $warning
+     * @return void
+     * @throws WireException
+     */
+    protected function redirectWithDashboardActionResult(string $message, string $warning = ''): void
+    {
+        $token = bin2hex(random_bytes(16));
+        $this->wire('cache')->saveFor('chatai', "dashboardAction_$token", [
+            'message' => $message,
+            'warning' => $warning,
+        ], 300);
+        $this->wire('session')->redirect("./?chatai_action_result=$token", 303);
+    }
+
+    /**
+     * @return void
+     * @throws WireException
+     */
+    protected function consumeDashboardActionResult(): void
+    {
+        $token = (string) $this->wire('input')->get->text('chatai_action_result');
+        if($token === '' || !preg_match('/^[a-f0-9]{32}$/', $token)) return;
+
+        $cache = $this->wire('cache');
+        $result = $cache->getFor('chatai', "dashboardAction_$token");
+        $cache->deleteFor('chatai', "dashboardAction_$token");
+        if(!is_array($result)) return;
+
+        $warning = (string) ($result['warning'] ?? '');
+        if($warning !== '') $this->warning($warning);
+
+        $message = (string) ($result['message'] ?? '');
+        if($message !== '') $this->message($message);
+    }
+
+    /**
      * @return array|mixed|string|void
      * @throws Wire404Exception
      * @throws WireException
@@ -508,21 +575,12 @@ class ProcessChatAI extends Process
         // Chart.js from CDN (simple and proven)
         $this->config->scripts->add('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js');
 
-        $svc = $this->chatAI()->promptService();
-        $cfg = $svc->loadPromptSettings();
+        $this->consumeDashboardActionResult();
 
-        $form = $modules->get('InputfieldForm');
-        $form->attr('name+id', $this->formName);
+        $handledDashboardAction = false;
 
-        // Build each tab fieldset and add to form
-        foreach ($this->tabs($tabView) as $key => $tab) {
-            $out = $tab->build($form, $cfg);   // returns array
-            $key = array_key_first($out);
-            $tabView[$key] = $out[$key];
-            $form = $out['form'];
-        }
-
-        // Handle prune obslog days
+        // Handle dedicated dashboard actions before building the form. Long RAG actions close
+        // the session, so store their result outside the session and finish with POST/redirect/GET.
         if($input->post->submit_prune_obslog) {
             $raw = trim((string) $input->post->prune_retain_days);
             if($raw === '') {
@@ -544,8 +602,9 @@ class ProcessChatAI extends Process
             $this->wire('session')->redirect('./');
         }
 
-        // Handle "Run Backfill & Reconcile" for vector db
         if($input->post->rag_run_reindex) {
+            $handledDashboardAction = true;
+            $this->ensurePromptSettings();
             $selector = $this->buildRagReindexSelectorFromPost();
             $dryRun = !empty($input->post->rag_dry_run);
             $forceRebuild = !empty($input->post->rag_force_rebuild);
@@ -562,14 +621,17 @@ class ProcessChatAI extends Process
                 ? $this->_('DRY RUN — no database changes were made. ')
                 : '';
 
-            $this->message($prefix . $this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary));
+            $warning = '';
             if(!empty($summary['_warn'])) {
-                $this->warning($summary['_warn']);
-                unset($summary['_warn']); // keep the JSON summary clean
+                $warning = (string) $summary['_warn'];
+                unset($summary['_warn']);
             }
+            $message = $prefix . $this->_('Re-index & Reconcile complete.') . ' ' . json_encode($summary);
+            $this->redirectWithDashboardActionResult($message, $warning);
         }
 
         if($input->post->rag_run_remove) {
+            $handledDashboardAction = true;
             $sanitizer = $this->wire('sanitizer');
             $selector = $sanitizer->text($input->post->rag_remove_selector);
             if(!empty($selector)) {
@@ -584,14 +646,29 @@ class ProcessChatAI extends Process
                         try {
                             $rag->deletePageVectors($page);
                         }
-                        catch (\Throwable $e) { $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage());
+                        catch (\Throwable $e) {
+                            $this->wire('log')->save('chatai', 'Index delete error: ' . $e->getMessage());
                         }
                     }
                 } else {
                     $this->message(_("No pages to remove"));
                 }
-
             }
+            $this->redirectWithDashboardActionResult($this->_('Bulk vector removal complete.'));
+        }
+
+        $svc = $this->chatAI()->promptService();
+        $cfg = $svc->loadPromptSettings();
+
+        $form = $modules->get('InputfieldForm');
+        $form->attr('name+id', $this->formName);
+
+        // Build each tab fieldset and add to form
+        foreach ($this->tabs($tabView) as $key => $tab) {
+            $out = $tab->build($form, $cfg);   // returns array
+            $key = array_key_first($out);
+            $tabView[$key] = $out[$key];
+            $form = $out['form'];
         }
 
         // Submit button
@@ -600,7 +677,7 @@ class ProcessChatAI extends Process
         $submit->header = true;
         $form->add($submit);
 
-        if($form->isSubmitted()) {
+        if(!$handledDashboardAction && $form->isSubmitted()) {
             $inputPost = $this->wire('input')->post;
             $inputProcessed = true;
             $values = [];
@@ -608,33 +685,29 @@ class ProcessChatAI extends Process
             foreach ($form->children as $tab) {
                 if (!$tab->children) continue;
 
-                foreach ($form->children as $tab) {
-                    if (!$tab->children) continue;
+                // get ALL descendants, not just direct children
+                foreach ($tab->getAll() as $fld) {
+                    if (!$fld instanceof Inputfield) continue;
 
-                    // get ALL descendants, not just direct children
-                    foreach ($tab->getAll() as $fld) {
-                        if (!$fld instanceof Inputfield) continue;
+                    $name = (string) $fld->attr('name');
+                    if ($name === '' || $name === 'submit') continue;
 
-                        $name = (string)$fld->name;
-                        if ($name === '' || $name === 'submit') continue;
+                    if (!$fld->processInput($inputPost)) {
+                        $inputProcessed = false;
+                        break 2;
+                    }
 
-                        if (!$fld->processInput($inputPost)) {
-                            $inputProcessed = false;
-                            break 2;
-                        }
+                    // Base value
+                    $values[$name] = $fld->value;
 
-                        // Base value
-                        $values[$name] = $fld->value;
-
-                        // Preserve ML values
-                        if (!empty($fld->useLanguages)) {
-                            $langs = $this->wire('languages');
-                            if ($langs) {
-                                foreach ($langs as $lang) {
-                                    $key = "{$name}__{$lang->id}";
-                                    if ($inputPost->$key !== null) {
-                                        $values[$key] = $inputPost->$key;
-                                    }
+                    // Preserve ML values
+                    if (!empty($fld->useLanguages)) {
+                        $langs = $this->wire('languages');
+                        if ($langs) {
+                            foreach ($langs as $lang) {
+                                $key = "{$name}__{$lang->id}";
+                                if ($inputPost->$key !== null) {
+                                    $values[$key] = $inputPost->$key;
                                 }
                             }
                         }
@@ -719,9 +792,9 @@ class ProcessChatAI extends Process
             $inputfieldsArray = $tab->getAll();
 
             foreach($inputfieldsArray as $tabField) {
-                $fldName = $tabField->attributes['name'] ?? '';
+                $fldName = (string) $tabField->attr('name');
                 if ($fldName === '' || $fldName === 'submit' || $fldName === '_InputfieldForm' || str_starts_with($fldName, 'TOKEN')) continue;
-                if ($user->language->isDefault() || empty($tabField->useLanguages)) {
+                if (!$user->language || $user->language->isDefault() || empty($tabField->useLanguages)) {
                     $data[$fldName] = $form->getValueByName($fldName);
                 } else {
                     $data[$fldName] = !empty($tabField->getLanguageValue($user->language))
