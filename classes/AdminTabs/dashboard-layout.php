@@ -184,7 +184,7 @@ $dashboardConfig = [
 
         <details>
             <summary class="InputfieldHeader uk-form-label chatai-summary">
-                <span><i class="fa fa-fw fa-cog"></i> <?=_('Helpers')?></span>
+                <span><i class="fa fa-fw fa-cog"></i> <?=__('Helpers')?></span>
             </summary>
 
             <div class="chatai-obslog">
@@ -206,7 +206,7 @@ $dashboardConfig = [
         </details>
         <div id="chatai-prune-pop" popover>
             <p class="chatai-dashboard-muted chatai-dashboard-sub">
-                <?=_('Enter the number of days to retain or Esc to cancel')?>
+                <?=__('Enter the number of days to retain or Esc to cancel')?>
             </p>
             <input
                     type="number"
