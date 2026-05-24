@@ -63,7 +63,7 @@ class PromptTab
         $f = $m->get("InputfieldCheckbox");
         $f->attr("name+id", "use_blacklist");
         $f->label($m->_("Use blacklist"));
-        $value = empty($data["use_blacklist"]) ? null : 1;
+        $value = !array_key_exists("use_blacklist", $data) || !empty($data["use_blacklist"]) ? 1 : null;
         $f->val($value);
         if ($value === 1) {
             $f->attr("checked", "checked");

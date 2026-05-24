@@ -8,6 +8,7 @@
 - Save ProcessChatAI prompt settings with an upsert so new installs create the initial `chatai_prompt` row on first save.
 - Fix ProcessChatAI default prompt-setting collection so new installs save real form defaults rather than an empty JSON array.
 - Initialize default prompt settings before dashboard reindex actions so clean-install reindexing uses the same saved config it creates.
+- Enable blacklist filtering by default when new installs create their initial Prompt settings; explicitly saved disabled settings remain unchanged.
 
 ##0.0.5Alpha
 - Require AgentTools 11 or newer and ProcessWire 3.0.255 or newer.

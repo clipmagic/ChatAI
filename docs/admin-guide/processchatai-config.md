@@ -390,6 +390,8 @@ Messages containing blacklisted terms are blocked locally and are **not sent to 
 
 Blacklist terms themselves are defined below and are fully site-controlled.
 
+This setting is enabled by default on a new installation. Administrators can turn it off or revise the terms for the site's requirements.
+
 ---
 
 ##### Blacklisted Terms
