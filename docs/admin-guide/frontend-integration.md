@@ -1,6 +1,6 @@
 ## 7. Frontend Integration
 
-![ChatAI frontend widget](../images/sample-homepage-chat-widget.png)
+![ChatAI frontend widget](https://github.com/clipmagic/ChatAI/blob/main/docs/images/chatai-readme.jpg?raw=true)
 
 ChatAI ships with a default frontend widget (PHP), JavaScript, and CSS.
 

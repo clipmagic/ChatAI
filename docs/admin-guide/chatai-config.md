@@ -1,6 +1,6 @@
 ## 5. ChatAI Module Configuration 
 
-![ChatAI module config](../images/chatai-module-config.jpg)
+![ChatAI module config](../images/chatai-module-config.png)
 
 ### 5.1 Model Settings
 
