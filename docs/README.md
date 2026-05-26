@@ -1,6 +1,6 @@
 # ChatAI Documentation
 
-![ChatAI - ProcessWire chatbot](images/chatai-readme.png)
+![ChatAI - ProcessWire chatbot](images/chatai-readme.jpg)
 
 
 ## Admin Guides
